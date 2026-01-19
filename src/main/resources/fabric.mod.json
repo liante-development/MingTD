@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "mingtd",
+  "version": "${version}",
+  "name": "MingTD",
+  "description": "MingTowerDefense",
+  "authors": [],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "icon": "assets/mingtd/icon.png",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-datagen": [
+      "com.liante.client.MingtdDataGenerator"
+    ],
+    "client": [
+      "com.liante.client.MingtdClient"
+    ],
+    "main": [
+      "com.liante.Mingtd"
+    ]
+  },
+  "mixins": [
+    "mingtd.mixins.json",
+    {
+      "config": "mingtd.client.mixins.json",
+      "environment": "client"
+    }
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}
