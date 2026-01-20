@@ -4,6 +4,7 @@
   "package": "com.liante.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
+    "MobEntityAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

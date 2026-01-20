@@ -1,0 +1,11 @@
+{
+  "type": "minecraft:flat",
+  "settings": {
+    "layers": [
+      { "block": "minecraft:bedrock", "height": 1 },
+      { "block": "minecraft:stone", "height": 60 },
+      { "block": "minecraft:grass_block", "height": 3 }
+    ],
+    "biome": "minecraft:plains"
+  }
+}
