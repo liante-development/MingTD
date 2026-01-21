@@ -1,5 +1,7 @@
 package com.liante;
 
+import com.liante.config.DefenseConfig;
+import com.liante.manager.WaveManager;
 import com.liante.map.MapGenerator;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -9,6 +11,7 @@ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityType;
 import net.minecraft.entity.mob.ZombieEntity;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
@@ -30,10 +33,15 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 
+import static com.liante.config.DefenseConfig.getSpawnLocation;
+
 public class Mingtd implements ModInitializer {
     // 맵의 기준 좌표 (0, 100, 0 등 고정된 위치 권장)
     public static final BlockPos SPAWN_POS = new BlockPos(0, 100, 0);
     public static final Identifier OPEN_SCREEN_PACKET = Identifier.of("mingtd", "open_screen");
+    // 클래스 레벨에서 변수 선언 (나중에 초기화)
+    private WaveManager waveManager;
+    private int spawnTimer = 0;
 
     @Override
     public void onInitialize() {
@@ -76,28 +84,35 @@ public class Mingtd implements ModInitializer {
 
             var world = server.getOverworld();
 
-            // 맵의 중앙 위쪽으로 이동
-            double x = (double)SPAWN_POS.getX() + MapGenerator.SIZE + (MapGenerator.GAP / 2.0);
-            double y = (double)SPAWN_POS.getY() + 15; // 고도를 30 정도로 높임
-            double z = (double)SPAWN_POS.getZ() + (MapGenerator.SIZE / 2.0);
+            // 1. 카메라 좌표 설정 (0,0 중앙 기준)
+            // Z값을 PATH_RANGE보다 조금 더 뒤로(-30) 빼야 화면 중앙에 0,0이 옵니다.
+            double x = 0.0;
+            double y = DefenseConfig.GROUND_Y + DefenseConfig.CAMERA_HEIGHT;
+            double z = -30.0; // 중앙(0,0)을 바라보기 위해 약간 뒤쪽(북쪽)으로 배치
 
-            // pitch를 70~90으로 설정하면 바닥을 내려다봅니다.
-            player.teleport(world, x, y, z, Collections.emptySet(), 0.0f, 75.0f, false);
+            // 2. 시점 설정 (Yaw, Pitch)
+            // Yaw 0.0f는 남쪽(Z+)을 바라봅니다. 중앙이 0,0이므로 정남향을 보게 합니다.
+            float yaw = 0.0f;
+            float pitch = DefenseConfig.CAMERA_PITCH;
+
+            // 3. 텔레포트 적용
+            // world는 해당 구역의 ServerWorld입니다.
+            player.teleport(world, x, y, z, Collections.emptySet(), yaw, pitch, false);
 
             // 서버측 로직: 플레이어가 접속하면 패킷을 보냄
             ServerPlayNetworking.send(handler.getPlayer(), new OpenRtsScreenPayload());
         });
 
-        // onInitialize 또는 전용 매니저에 추가
-        ServerTickEvents.END_SERVER_TICK.register(server -> {
-            for (var player : server.getPlayerManager().getPlayerList()) {
-                // 플레이어가 맵 중심(SPAWN_POS)에서 너무 멀어지면 중심으로 다시 당김
-                if (player.squaredDistanceTo(SPAWN_POS.getX(), SPAWN_POS.getY(), SPAWN_POS.getZ()) > 2500) { // 반경 50블록
-                    player.sendMessage(Text.literal("§c맵 경계를 벗어날 수 없습니다!"), true);
-                    // 부드러운 이동 대신 강제 좌표 고정
-                }
-            }
-        });
+//        // onInitialize 또는 전용 매니저에 추가
+//        ServerTickEvents.END_SERVER_TICK.register(server -> {
+//            for (var player : server.getPlayerManager().getPlayerList()) {
+//                // 플레이어가 맵 중심(SPAWN_POS)에서 너무 멀어지면 중심으로 다시 당김
+//                if (player.squaredDistanceTo(SPAWN_POS.getX(), SPAWN_POS.getY(), SPAWN_POS.getZ()) > 2500) { // 반경 50블록
+//                    player.sendMessage(Text.literal("§c맵 경계를 벗어날 수 없습니다!"), true);
+//                    // 부드러운 이동 대신 강제 좌표 고정
+//                }
+//            }
+//        });
 
         // [초기화 명령어] /mingtd reset 입력 시 맵 다시 생성
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
@@ -162,6 +177,48 @@ public class Mingtd implements ModInitializer {
                     }
                 }
             });
+        });
+
+        // 서버 틱 이벤트 등록 (서버가 살아있는 동안 계속 실행됨)
+        ServerTickEvents.END_SERVER_TICK.register(server -> {
+            // 1. 월드가 로딩되었는지 확인
+            ServerWorld world = server.getOverworld();
+            if (world == null) return;
+
+            // 2. WaveManager가 아직 없다면 생성 (origin으로 MAP_ORIGIN 전달)
+            if (waveManager == null) {
+                waveManager = new WaveManager(world, SPAWN_POS);
+            }
+
+            // 3. 타이머 작동 (1초마다 좀비 스폰)
+            spawnTimer++;
+            if (spawnTimer >= 20) {
+                spawnTimer = 0;
+                waveManager.spawnMonster();
+            }
+            // 테스트를 위해 1마리만 생성하도록 제한
+//            if (spawnTimer < 1) {
+//                waveManager.spawnMonster();
+//                spawnTimer = 999999; // 다시는 생성되지 않도록 타이머를 크게 고정
+//            }
+
+            if (waveManager != null) {
+                List<ZombieEntity> zombies = new ArrayList<>();
+                for (Entity entity : server.getOverworld().iterateEntities()) {
+                    // 조건을 하나로 합쳐서 거리(50블록) 안에 있는 좀비만 리스트에 넣습니다.
+                    if (entity instanceof ZombieEntity zombie && zombie.isAlive()) {
+                        // [수정] getPos() 대신 직접 좌표로 Vec3d 생성
+                        Vec3d currentPos = new Vec3d(zombie.getX(), zombie.getY(), zombie.getZ());
+
+                        // SPAWN_POS(중심점) 기준으로 50블록 이내인 경우에만 추가
+                        if (currentPos.distanceTo(Vec3d.ofCenter(SPAWN_POS)) < 50.0) {
+                            zombies.add(zombie);
+                        }
+                    }
+                }
+                // 필터링된 좀비들만 매니저에게 전달
+                waveManager.tickMonsters(zombies);
+            }
         });
     }
 
