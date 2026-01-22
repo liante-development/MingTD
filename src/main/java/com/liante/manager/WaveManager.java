@@ -1,5 +1,6 @@
 package com.liante.manager;
 
+import com.liante.DefenseState;
 import com.liante.config.DefenseConfig;
 import com.liante.mixin.MobEntityAccessor;
 import net.minecraft.command.argument.EntityAnchorArgumentType;
@@ -24,12 +25,27 @@ public class WaveManager {
     private static final String TARGET_INDEX_TAG = "target_index";
     private static final Logger LOGGER = LoggerFactory.getLogger("MingTD-RTS");
 
+    // [추가] 현재 웨이브를 저장할 변수
+    private int currentWave;
+
     public WaveManager(ServerWorld world, BlockPos origin) {
         this.world = world;
         this.origin = origin;
 
+        DefenseState state = DefenseState.getServerState(world);
+        this.currentWave = state.waveStep;
+
         // 객체가 생성될 때 좌표 로그를 즉시 출력
 //        logWaypointCoordinates();
+    }
+
+    // 웨이브 단계가 올라갈 때 호출할 메서드 (예시)
+    public void nextWave() {
+        this.currentWave++;
+        // 서버 저장 데이터도 함께 업데이트
+        DefenseState state = DefenseState.getServerState(this.world);
+        state.waveStep = this.currentWave;
+        state.markDirty(); // 파일 저장 예약
     }
 
     public void spawnMonster() {
@@ -92,13 +108,6 @@ public class WaveManager {
         Vec3d targetOffset = DefenseConfig.WAYPOINTS.get(nextIndex);
         double targetX = origin.getX() + targetOffset.x;
         double targetZ = origin.getZ() + targetOffset.z;
-
-        // [로그 추가] 목적지가 변경되는 시점의 좀비 위치와 새 목적지 출력
-//        LOGGER.info(String.format("=== [목적지 변경] 좀비ID:%d ===", monster.getId()));
-//        LOGGER.info(String.format("  - 현재 위치: [%.2f, %.2f]", currentX, currentZ));
-//        LOGGER.info(String.format("  - 다음 목적지: 지점 %d [%.2f, %.2f]", nextIndex, targetX, targetZ));
-
-        // 만약 이전 목적지에서 너무 멀리서 꺾었다면 이 로그의 '현재 위치'를 보고 판정 거리를 조절할 수 있습니다.
 
         // 4. 이동 명령 내리기
         // 2026년 API 기준, 네비게이션이 가끔 경로를 못 찾으면 false를 반환하므로 확인 로그를 찍을 수도 있습니다.
@@ -181,49 +190,4 @@ public class WaveManager {
         String barStr = "§a" + "■".repeat(activeBar) + "§7" + "■".repeat(barCount - activeBar);
         return Text.literal(barStr);
     }
-
-    // 로그 가독성을 위한 보조 메서드
-//    private String getPointColorName(int index) {
-//        return switch (index) {
-//            case 0 -> "파랑-왼쪽위";
-//            case 1 -> "초록-왼쪽아래";
-//            case 2 -> "노랑-오른쪽아래";
-//            case 3 -> "빨강-오른쪽위";
-//            default -> "알 수 없음";
-//        };
-//    }
-//
-//    public void logWaypointCoordinates() {
-//        int r = DefenseConfig.PATH_RANGE; // 13
-//
-//        // [A] 논리적으로 계산된 2x2 양털의 실제 정중앙 (우리의 목표 좌표)
-//        double targetPos = (double)r;
-//        double targetNeg = -(double)r;
-//
-//        LOGGER.info("=== [2026 MINGTD 좌표 정밀 검증 로그] ===");
-//
-//        for (int i = 0; i < DefenseConfig.WAYPOINTS.size(); i++) {
-//            // [B] 현재 DefenseConfig에 설정되어 실제 이동 명령에 쓰이는 좌표 (현재 값)
-//            Vec3d offset = DefenseConfig.WAYPOINTS.get(i);
-//            double currentWorldX = origin.getX() + offset.x;
-//            double currentWorldZ = origin.getZ() + offset.z;
-//
-//            // [C] 양털 중심점과 현재 설정값의 오차 계산용 데이터
-//            String colorName = getPointColorName(i);
-//
-//            LOGGER.info(String.format("지점 %d [%s]", i, colorName));
-//            LOGGER.info(String.format("  -> 현재 명령 좌표: X=%.2f, Z=%.2f", currentWorldX, currentWorldZ));
-//
-//            // 참고: i에 따른 이론적 중앙값 출력
-//            double idealX = (i == 0 || i == 1) ? targetPos : targetNeg;
-//            double idealZ = (i == 0 || i == 3) ? targetPos : targetNeg;
-//
-//            LOGGER.info(String.format("  -> 양털 중앙 기대값: X=%.1f, Z=%.1f", origin.getX() + idealX, origin.getZ() + idealZ));
-//        }
-//        LOGGER.info("===========================================");
-//    }
-//
-//    private void logPoint(int i, String name, double x, double z) {
-//        LOGGER.info(String.format("지점 %d [%s] -> 월드좌표: X=%.1f, Z=%.1f", i, name, x, z));
-//    }
 }

@@ -1,37 +1,31 @@
 package com.liante.client;
 
-import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gui.screen.ChatScreen;
+import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.input.KeyInput;
 import net.minecraft.client.render.Camera;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.mob.ZombieEntity;
-import net.minecraft.entity.projectile.ProjectileUtil;
 import net.minecraft.text.Text;
-import net.minecraft.util.hit.BlockHitResult;
-import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
-import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
-import org.joml.Vector4f;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.List;
-import java.util.Optional;
 
 public class RtsScreen extends Screen {
     // 1. 로그 기록을 위한 Logger 선언
     private static final Logger LOGGER = LoggerFactory.getLogger("MingTD-RTS");
 
     private final SelectionManager selectionManager;
+
+    // 클래스 내부에 정적 변수 추가
+    public static boolean isChatting = false;
 
     public RtsScreen() {
         super(Text.literal("RTS Screen"));
@@ -147,16 +141,29 @@ public class RtsScreen extends Screen {
 //        super(Text.literal("RTS Control Screen"));
 //    }
 //
-//    @Override
-//    protected void init() {
-//        super.init();
-//        // 화면이 열릴 때 로그 출력
-//        LOGGER.info("RTS 화면이 성공적으로 열렸습니다!");
-//        if (this.client != null) {
-//            this.client.mouse.unlockCursor();
-//            LOGGER.info("마우스 커서 해제 시도 완료");
-//        }
-//    }
+    @Override
+    protected void init() {
+        super.init();
+        // 화면이 열릴 때 로그 출력
+        LOGGER.info("RTS 화면이 성공적으로 열렸습니다!");
+        if (this.client != null) {
+            this.client.mouse.unlockCursor();
+            LOGGER.info("마우스 커서 해제 시도 완료");
+        }
+
+        // 화면 왼쪽 하단에 리셋 버튼 추가
+        this.addDrawableChild(ButtonWidget.builder(Text.literal("게임 리셋"), button -> {
+                    // 서버로 리셋 패킷 전송 (MoveUnitPayload 같은 방식으로 커스텀 패킷 정의 필요)
+                    // ClientPlayNetworking.send(new ResetGamePayload());
+
+                    // 임시로 명령어를 직접 실행하게 하고 싶다면:
+                    if (this.client != null && this.client.player != null) {
+                        this.client.player.networkHandler.sendChatCommand("mingtd reset");
+                    }
+                })
+                .dimensions(10, this.height - 30, 80, 20) // 위치 및 크기
+                .build());
+    }
 //
 ////    @Override
 ////    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
@@ -349,5 +356,40 @@ public class RtsScreen extends Screen {
     public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
         // 배경을 검게 칠하거나 블러를 넣는 기능을 완전히 차단합니다.
         // 아무것도 호출하지 마세요.
+    }
+
+    @Override
+    public boolean keyPressed(KeyInput input) {
+        // 1. ESC 키 처리
+        // 1. ESC 입력 시 즉시 메뉴창 호출
+        if (input.isEscape() && this.shouldCloseOnEsc()) {
+            if (this.client != null) {
+                // RtsScreen을 닫으면서 동시에 메뉴창을 엽니다.
+                // 이렇게 하면 관전자 모드 시점으로 나가지 않고 바로 메뉴가 뜹니다.
+                this.client.setScreen(new GameMenuScreen(true));
+            }
+            return true;
+        }
+
+        // 2. 채팅 및 명령어 창 열기
+        if (this.client != null) {
+            // [수정] matchesKey에 input 객체를 직접 전달합니다.
+            if (this.client.options.chatKey.matchesKey(input) ||
+                    this.client.options.commandKey.matchesKey(input)) {
+                isChatting = true; // 채팅 시작 상태 기록
+                // 명령어 키(/)인 경우 "/"를, 아니면 빈 문자열 설정
+                String initialText = this.client.options.commandKey.matchesKey(input) ? "/" : "";
+
+                // [확인 필요] ChatScreen의 생성자 인수가 2개인 경우
+                // 예: new ChatScreen(Text.literal("제목"), initialText) 또는
+                //     new ChatScreen(initialText, 다른인자)
+                // 일단 에러가 났던 부분을 임시로 주석 처리하거나, 생성자 정보를 알려주시면 바로 고쳐드립니다.
+                this.client.setScreen(new ChatScreen(initialText, false));
+
+                return true;
+            }
+        }
+
+        return super.keyPressed(input);
     }
 }
