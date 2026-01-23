@@ -1,5 +1,7 @@
 package com.liante.client;
 
+import com.liante.manager.CameraMovePayload;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
@@ -9,14 +11,21 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.input.KeyInput;
 import net.minecraft.client.render.Camera;
+import net.minecraft.client.util.InputUtil;
+import net.minecraft.client.util.Window;
+import net.minecraft.entity.LivingEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.ArrayList;
+import java.util.List;
 
 public class RtsScreen extends Screen {
     // 1. 로그 기록을 위한 Logger 선언
@@ -66,6 +75,33 @@ public class RtsScreen extends Screen {
         }
 
         return super.mouseReleased(click);
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+
+        if (!isChatting && client != null && client.player != null) {
+            float moveSpeed = 0.8f;
+            float verticalSpeed = 0.5f;
+            float dx = 0, dy = 0, dz = 0;
+
+            net.minecraft.client.util.Window window = client.getWindow();
+
+            // 방향키 (X, Z축)
+            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_W)) dz += moveSpeed;
+            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_S)) dz -= moveSpeed;
+            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_A)) dx += moveSpeed;
+            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_D)) dx -= moveSpeed;
+
+            // 높낮이 (Y축) - Left Alt: 상승 / Left Control: 하강
+            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_LEFT_ALT)) dy += verticalSpeed;
+            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_LEFT_CONTROL)) dy -= verticalSpeed;
+
+            if (dx != 0 || dy != 0 || dz != 0) {
+                ClientPlayNetworking.send(new CameraMovePayload(dx, dy, dz));
+            }
+        }
     }
 
     // 마우스 커서 위치의 '지면' 좌표를 구하는 유틸리티

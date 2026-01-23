@@ -1,8 +1,11 @@
 package com.liante;
 
 import com.liante.config.DefenseConfig;
+import com.liante.manager.CameraMovePayload;
 import com.liante.manager.WaveManager;
 import com.liante.map.MapGenerator;
+import com.liante.spawner.UnitSpawner;
+import com.mojang.brigadier.arguments.DoubleArgumentType;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -10,11 +13,19 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import net.fabricmc.fabric.api.object.builder.v1.entity.FabricDefaultAttributeRegistry;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityType;
+import net.minecraft.entity.SpawnGroup;
+import net.minecraft.entity.mob.VindicatorEntity;
 import net.minecraft.entity.mob.ZombieEntity;
+import net.minecraft.entity.passive.VillagerEntity;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.packet.CustomPayload;
+import net.minecraft.registry.Registries;
+import net.minecraft.registry.Registry;
+import net.minecraft.registry.RegistryKey;
 import net.minecraft.scoreboard.*;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.CommandManager;
@@ -26,6 +37,7 @@ import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameMode;
+import net.minecraft.world.World;
 import net.minecraft.world.rule.GameRules;
 
 import java.util.ArrayList;
@@ -41,7 +53,20 @@ public class Mingtd implements ModInitializer {
     private WaveManager waveManager;
     private int spawnTimer = 0;
 
-    public static final int MAX_MONSTER_COUNT = 10;
+    public static final int MAX_MONSTER_COUNT = 100;
+
+    // 1. 유닛의 고유 ID를 상수로 정의
+    public static final Identifier DEFENSE_UNIT_ID = Identifier.of("mingtd", "defense_unit");
+
+    // 2. 엔티티 타입 등록
+    public static final EntityType<MingtdUnit> MINGTD_UNIT_TYPE = Registry.register(
+            Registries.ENTITY_TYPE,
+            DEFENSE_UNIT_ID,
+            EntityType.Builder.create((EntityType<MingtdUnit> type, World world) -> new MingtdUnit(type, world), SpawnGroup.CREATURE)
+                    .dimensions(0.6f, 1.95f)
+                    // [보완] 정의한 ID를 사용하여 RegistryKey를 생성
+                    .build(RegistryKey.of(Registries.ENTITY_TYPE.getKey(), DEFENSE_UNIT_ID))
+    );
 
     @Override
     public void onInitialize() {
@@ -49,6 +74,10 @@ public class Mingtd implements ModInitializer {
         PayloadTypeRegistry.playS2C().register(OpenRtsScreenPayload.ID, OpenRtsScreenPayload.CODEC);
         PayloadTypeRegistry.playC2S().register(MoveUnitPayload.ID, MoveUnitPayload.CODEC);
         PayloadTypeRegistry.playC2S().register(SelectUnitPayload.ID, SelectUnitPayload.CODEC);
+        PayloadTypeRegistry.playC2S().register(CameraMovePayload.ID, CameraMovePayload.CODEC);
+
+        // onInitialize에서 속성 등록
+        FabricDefaultAttributeRegistry.register(MINGTD_UNIT_TYPE, MingtdUnit.createVindicatorAttributes());
 
         // 날씨 및 시간 고정 로직
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
@@ -59,6 +88,7 @@ public class Mingtd implements ModInitializer {
             if (state.waveStep == 1 && state.monsterCount == 0 && !state.isGameOver) {
                 MapGenerator.setupDefenseWorld(overworld, SPAWN_POS);
                 // 만약 '중복 생성'을 확실히 막고 싶다면 state에 boolean 변수를 하나 추가하는 것이 가장 좋습니다.
+                state.addWisp(overworld, 5);
                 state.markDirty();
             }
 
@@ -99,7 +129,10 @@ public class Mingtd implements ModInitializer {
                     null
             );
 
-            // 3. 사이드바에 표시
+            scoreboard.getOrCreateScore(ScoreHolder.fromName("§b⚡ 보유 위습"), obj).setScore(state.getWispCount());
+            scoreboard.getOrCreateScore(ScoreHolder.fromName("§c👾 남은 몬스터"), obj).setScore(0);
+
+                        // 3. 사이드바에 표시
             scoreboard.setObjectiveSlot(ScoreboardDisplaySlot.SIDEBAR, obj);
         });
 
@@ -109,8 +142,9 @@ public class Mingtd implements ModInitializer {
                 // [수정] 텔레포트와 게임모드 설정도 이 execute 안에서 하는 것이 더 안전합니다.
                 var player = handler.getPlayer();
                 player.changeGameMode(GameMode.SPECTATOR);
-
                 var world = server.getOverworld();
+                DefenseState state = DefenseState.getServerState(world);
+
                 double x = 0.0;
                 double y = DefenseConfig.GROUND_Y + DefenseConfig.CAMERA_HEIGHT;
                 double z = -30.0;
@@ -119,8 +153,21 @@ public class Mingtd implements ModInitializer {
 
                 player.teleport(world, x, y, z, Collections.emptySet(), yaw, pitch, false);
 
+                // 2. [추가] 접속한 플레이어에게 스코어보드 강제 동기화
+                Scoreboard scoreboard = server.getScoreboard();
+                ScoreboardObjective obj = scoreboard.getNullableObjective("monster_count");
+                if (obj != null) {
+                    // 개인별 점수 칸을 0으로 초기화하거나 현재 몬스터 수로 설정
+                    scoreboard.getOrCreateScore(player, obj).setScore(state.monsterCount);
+                }
+
                 // 패킷 전송은 여기서 한 번만!
                 ServerPlayNetworking.send(player, new OpenRtsScreenPayload());
+
+                // [추가] 환영 메시지 및 현재 자원 안내
+                player.sendMessage(Text.literal("§e MingTD에 오신 것을 환영합니다!"), false);
+                player.sendMessage(Text.literal("§b 현재 보유 위습: §f" + state.getWispCount() + "개"), false);
+
             });
         });
 
@@ -132,16 +179,30 @@ public class Mingtd implements ModInitializer {
                                 ServerWorld world = context.getSource().getWorld();
                                 DefenseState state = DefenseState.getServerState(world);
 
-                                // 데이터 초기화
+                                // 1. 삭제할 엔티티를 임시 리스트에 수집 (플레이어 제외)
+                                List<Entity> toRemove = new ArrayList<>();
+                                for (Entity entity : world.iterateEntities()) {
+                                    // 플레이어(ServerPlayerEntity)가 아닌 경우에만 삭제 리스트에 추가
+                                    if (!(entity instanceof ServerPlayerEntity)) {
+                                        toRemove.add(entity);
+                                    }
+                                }
+
+                                // 2. 수집된 엔티티들을 안전하게 제거
+                                toRemove.forEach(Entity::discard);
+
+                                // 3. 데이터 초기화
                                 state.isGameOver = false;
-                                state.status = DefenseState.GameStatus.RUNNING; // 리셋 시 자동 시작
+                                state.status = DefenseState.GameStatus.RUNNING;
                                 state.waveStep = 1;
                                 state.monsterCount = 0;
+                                state.setWispCount(5); // 기본 위습 지급
                                 state.markDirty();
 
+                                // 4. 맵 재생성
                                 MapGenerator.setupDefenseWorld(world, SPAWN_POS);
 
-                                context.getSource().sendFeedback(() -> Text.literal("디펜스 맵이 초기화되었습니다!"), false);
+                                context.getSource().sendFeedback(() -> Text.literal("§a디펜스 맵 초기화 및 모든 유닛이 제거되었습니다!"), false);
                                 return 1;
                             }))
                     .then(CommandManager.literal("pause")
@@ -160,26 +221,76 @@ public class Mingtd implements ModInitializer {
                                 context.getSource().sendFeedback(() -> Text.literal("▶️ 게임이 재개되었습니다."), false);
                                 return 1;
                             }))
+                    // [신규 추가] 랜덤 유닛 소환 명령어
+                    .then(CommandManager.literal("summon")
+                            .executes(context -> {
+                                ServerPlayerEntity player = context.getSource().getPlayer();
+                                ServerWorld world = context.getSource().getWorld();
+
+                                if (player != null) {
+                                    // 위습 1개를 소모하여 유닛 소환 (UnitSpawner 연동)
+                                    UnitSpawner.spawnRandomUnit(player, world);
+                                }
+                                return 1;
+                            }))
+                    .then(CommandManager.literal("camera")
+                            .then(CommandManager.argument("height", DoubleArgumentType.doubleArg(10.0, 150.0))
+                                    .executes(context -> {
+                                        // 1. 입력받은 높이 값 가져오기
+                                        double newHeight = DoubleArgumentType.getDouble(context, "height");
+
+                                        // 2. 설정 업데이트 (Pitch는 기존 DefenseConfig 값 유지)
+                                        DefenseConfig.CAMERA_HEIGHT = newHeight;
+
+                                        // 3. 실행한 플레이어 시점 즉시 갱신
+                                        ServerPlayerEntity player = context.getSource().getPlayer();
+                                        if (player != null) {
+                                            ServerWorld world = context.getSource().getWorld();
+                                            // X, Z, Yaw는 현재 플레이어 상태 유지, Y와 Pitch만 설정값 적용
+                                            player.teleport(world,
+                                                    player.getX(),
+                                                    DefenseConfig.GROUND_Y + DefenseConfig.CAMERA_HEIGHT,
+                                                    player.getZ(),
+                                                    java.util.Collections.emptySet(),
+                                                    player.getYaw(),
+                                                    DefenseConfig.CAMERA_PITCH,
+                                                    false
+                                            );
+                                        }
+
+                                        context.getSource().sendFeedback(() ->
+                                                Text.literal("§a카메라 높이가 §e" + newHeight + "§a로 변경되었습니다."), false);
+                                        return 1;
+                                    })
+                            )
+                    )
             ); // dispatcher.register 닫기
         }); // Event.register 닫기
 
         // --- 1. 유닛 이동 명령 처리 (MoveUnitPayload) ---
         ServerPlayNetworking.registerGlobalReceiver(MoveUnitPayload.ID, (payload, context) -> {
             context.server().execute(() -> {
+                // 1.21.1 표준: context.player().getServerWorld() 또는 getWorld() 사용
                 ServerWorld world = (ServerWorld) context.player().getEntityWorld();
                 Entity entity = world.getEntityById(payload.entityId());
 
-                if (entity instanceof ZombieEntity zombie) {
+                // [규칙 4] 오직 우리가 정의한 아군 유닛(MingtdUnit)만 명령을 수행함
+                // 만약 몬스터(ZombieEntity)가 패킷으로 들어와도 여기서 차단됨
+                if (entity instanceof MingtdUnit unit) {
                     Vec3d target = payload.targetPos();
 
-                    // Y값을 1.0 더해서 블록 위쪽 공간으로 확실히 인지하게 함
-                    // startMovingTo는 목표 지점의 발밑을 계산하므로 살짝 높은 게 안전합니다.
-                    boolean success = zombie.getNavigation().startMovingTo(
+                    // 유닛 이동 명령 수행 (지면 위 1.0 보정)
+                    boolean success = unit.getNavigation().startMovingTo(
                             target.x, target.y + 1.0D, target.z, 1.3D
                     );
 
-                    zombie.setTarget(null); // 플레이어 추적 방지
-                    System.out.println("[Server] 좀비 이동 결과: " + (success ? "성공" : "실패(좌표보정필요)"));
+                    // 몬스터 추적 AI 초기화
+                    unit.setTarget(null);
+
+                    // LOGGER.info("[MingTD] 아군 유닛 이동 명령: " + (success ? "성공" : "실패"));
+                } else if (entity instanceof ZombieEntity) {
+                    // 몬스터 이동 시도 시 로그 (선택 사항)
+                    System.out.println("[Warning] 몬스터 이동 명령 거부됨: " + entity.getId());
                 }
             });
         });
@@ -217,6 +328,32 @@ public class Mingtd implements ModInitializer {
             });
         });
 
+        ServerPlayNetworking.registerGlobalReceiver(CameraMovePayload.ID, (payload, context) -> {
+            context.server().execute(() -> {
+                ServerPlayerEntity player = context.player();
+                ServerWorld world = context.player().getEntityWorld();
+
+                // 1. 새로운 좌표 계산
+                double newX = player.getX() + payload.deltaX();
+                double newZ = player.getZ() + payload.deltaZ();
+
+                // 2. 높이 계산 및 Config 업데이트 (Alt/Ctrl 입력 반영)
+                DefenseConfig.CAMERA_HEIGHT += payload.deltaY();
+                double newY = DefenseConfig.GROUND_Y + DefenseConfig.CAMERA_HEIGHT;
+
+                // 3. 텔레포트 (Pitch와 Yaw는 고정)
+                player.teleport(
+                        world,
+                        newX, newY, newZ,
+                        java.util.Collections.emptySet(), // Relative 이동 사용 안 함 (절대 좌표 지정)
+                        player.getYaw(),
+                        DefenseConfig.CAMERA_PITCH,
+                        false // 스냅샷 여부
+                );
+            });
+        });
+
+
         // 서버 틱 이벤트 등록 (서버가 살아있는 동안 계속 실행됨)
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             // 1. 월드 및 데이터 상태 확인
@@ -250,7 +387,7 @@ public class Mingtd implements ModInitializer {
             Vec3d centerPos = Vec3d.ofCenter(SPAWN_POS);
 
             for (Entity entity : world.iterateEntities()) {
-                if (entity instanceof ZombieEntity zombie && zombie.isAlive()) {
+                if (entity instanceof ZombieEntity zombie && zombie.isAlive() && entity.getType() != Mingtd.MINGTD_UNIT_TYPE) {
                     // [수정] getPos() 대신 getX, getY, getZ를 사용하여 Vec3d를 직접 생성
                     Vec3d zombiePos = new Vec3d(zombie.getX(), zombie.getY(), zombie.getZ());
 
@@ -258,7 +395,14 @@ public class Mingtd implements ModInitializer {
                         activeZombies.add(zombie);
                     }
                 }
+
+                // 아군: 커스텀 타입인 경우
+                if (entity.getType() == Mingtd.MINGTD_UNIT_TYPE) {
+                    // RTS 선택 및 이동 패킷 대상
+                }
             }
+
+
 
             // 전역 변수 및 상태 데이터 업데이트
             // 1. 업데이트 전의 값을 미리 보관
@@ -298,6 +442,8 @@ public class Mingtd implements ModInitializer {
             for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
                 scoreboard.getOrCreateScore(player, obj).setScore(state.monsterCount);
             }
+
+            scoreboard.getOrCreateScore(ScoreHolder.fromName("§b⚡ 보유 위습"), obj).setScore(state.getWispCount());
 
             // 5. 게임 종료 및 경고 조건 체크
             // 100마리 초과 시 종료

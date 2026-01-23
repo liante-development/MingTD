@@ -15,8 +15,8 @@ public class DefenseConfig {
     public static final int PATH_RANGE = 13;  // 경로 중심선 거리 (±13)
     public static final int MAP_SIZE = 25;    // 각 플레이어별 할당 영역 크기
 
-    public static final double CAMERA_HEIGHT = 45.0; // 30보다 조금 더 높여야 전체가 잘 보입니다.
-    public static final float CAMERA_PITCH = 60.0f;  // 90도는 수직, 60도 정도가 RTS 최적 각도입니다.
+    public static double CAMERA_HEIGHT = 45.0;
+    public static float CAMERA_PITCH = 60.0f;
 
     // [반시계 방향: 파랑 -> 초록 -> 노랑 -> 빨강]
     public static final List<Vec3d> WAYPOINTS = List.of(

@@ -112,9 +112,9 @@ public class WaveManager {
         // 4. 이동 명령 내리기
         // 2026년 API 기준, 네비게이션이 가끔 경로를 못 찾으면 false를 반환하므로 확인 로그를 찍을 수도 있습니다.
         boolean success = monster.getNavigation().startMovingTo(targetX, DefenseConfig.GROUND_Y, targetZ, 1.4D);
-        if (!success) {
-            LOGGER.warn("  [경고] 좀비가 새 목적지로의 경로를 찾는 데 실패했습니다!");
-        }
+//        if (!success) {
+//            LOGGER.warn("  [경고] 좀비가 새 목적지로의 경로를 찾는 데 실패했습니다!");
+//        }
     }
 
     // [오류 해결] 엔티티 태그에서 현재 인덱스를 읽어오는 커스텀 메서드

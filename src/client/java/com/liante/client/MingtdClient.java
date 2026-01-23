@@ -1,18 +1,23 @@
 package com.liante.client;
 
 import com.liante.Mingtd;
+import com.liante.manager.CameraMovePayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
+import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.render.entity.VindicatorEntityRenderer;
 
 public class MingtdClient implements ClientModInitializer {
     private static boolean shouldReturnToRts = false;
 
     @Override
     public void onInitializeClient() {
+        EntityRendererRegistry.register(Mingtd.MINGTD_UNIT_TYPE, MingtdUnitRenderer::new);
+
         ClientPlayNetworking.registerGlobalReceiver(Mingtd.OpenRtsScreenPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
                 context.client().setScreen(new RtsScreen());
@@ -42,6 +47,8 @@ public class MingtdClient implements ClientModInitializer {
                     client.setScreen(new RtsScreen());
                 }
             }
+
+            if (client.player == null || client.currentScreen != null) return; // UI 열려있을 땐 중단
         });
     }
 

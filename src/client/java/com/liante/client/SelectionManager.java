@@ -1,9 +1,12 @@
 package com.liante.client;
 
+import com.liante.MingtdUnit;
 import com.liante.MoveUnitPayload;
 import com.liante.SelectUnitPayload;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.mob.ZombieEntity;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
@@ -23,7 +26,8 @@ public class SelectionManager {
     // [추가] 화면 드래그 시작 좌표 변수
     private double startX;
     private double startY;
-
+    // 전역 변수 타입 변경 권장
+    private List<LivingEntity> selectedUnits = new ArrayList<>();
     public SelectionManager(MinecraftClient client) {
         this.client = client;
     }
@@ -45,76 +49,62 @@ public class SelectionManager {
 
     // 좌클릭 뗌: 드래그 영역 내 유닛 확정
     public void endDragging(Vec3d endWorldPos) {
-        LOGGER.info("==== 드래그 종료 디버깅 ====");
+        if (dragStartWorldPos == null || endWorldPos == null) return;
 
-        if (dragStartWorldPos == null) {
-            LOGGER.warn("드래그 시작 지점(dragStartWorldPos)이 null입니다.");
-            return;
-        }
-
-        if (endWorldPos == null) {
-            LOGGER.warn("드래그 종료 지점(endWorldPos)이 null입니다. (지면을 찍지 못함)");
-            return;
-        }
-
-        // [수정] expand 값을 0.2~0.5 정도로 줄여서 히트박스에 딱 맞게 조정
-        // Y축은 좀비의 키(약 2블록)만 커버하도록 설정합니다.
         double minX = Math.min(dragStartWorldPos.x, endWorldPos.x);
         double minZ = Math.min(dragStartWorldPos.z, endWorldPos.z);
         double maxX = Math.max(dragStartWorldPos.x, endWorldPos.x);
         double maxZ = Math.max(dragStartWorldPos.z, endWorldPos.z);
 
-        // Y축 범위를 좀비가 서 있는 바닥(101)부터 머리 위(103)까지만 잡습니다.
-        Box selectionBox = new Box(minX, 100.5, minZ, maxX, 103.5, maxZ)
-                .expand(0.3); // 약간의 마진만 추가
+        // Y축 범위는 맵 지면(100) 기준으로 넉넉히 잡습니다.
+        Box selectionBox = new Box(minX, 100.0, minZ, maxX, 105.0, maxZ).expand(0.3);
 
-        LOGGER.info("정밀 SelectionBox 생성: " + selectionBox.toString());
+        // 1. 모든 살아있는 엔티티 탐색 (LivingEntity)
+        List<LivingEntity> found = client.world.getEntitiesByClass(
+                LivingEntity.class, selectionBox, e -> !e.isRemoved() && e.isAlive());
 
-        // 박스 내 좀비 탐색
-        List<ZombieEntity> found = client.world.getEntitiesByClass(
-                ZombieEntity.class, selectionBox, e -> !e.isRemoved());
+        // 기존 선택 해제
+        for (LivingEntity e : selectedUnits) e.setGlowing(false);
+        selectedUnits.clear();
 
-        LOGGER.info("탐색된 좀비 수: " + found.size());
+        if (!found.isEmpty()) {
+            // 2. 우선순위 판별: 아군 유닛(MingtdUnit)이 하나라도 포함되어 있는가?
+            boolean hasPlayerUnit = found.stream().anyMatch(e -> e instanceof MingtdUnit);
 
-        if (found.isEmpty()) {
-            // 박스 근처에 좀비가 실제로 있는지 확인하기 위한 추가 디버깅
-            List<ZombieEntity> allZombies = client.world.getEntitiesByClass(
-                    ZombieEntity.class, selectionBox.expand(10.0), e -> !e.isRemoved());
-            LOGGER.info("반경 10블록 이내 전체 좀비 수: " + allZombies.size());
+            if (hasPlayerUnit) {
+                // [규칙 1] 내 유닛이 있으면 내 유닛들만 '다중 선택'
+                for (LivingEntity e : found) {
+                    if (e instanceof MingtdUnit) {
+                        e.setGlowing(true);
+                        selectedUnits.add(e);
+                    }
+                }
+            } else {
+                // [규칙 2] 내 유닛이 없고 몬스터(Zombie)만 있다면 가장 첫 번째 몬스터만 '단일 선택'
+                LivingEntity firstMonster = found.get(0);
+                if (firstMonster instanceof ZombieEntity) {
+                    firstMonster.setGlowing(true);
+                    selectedUnits.add(firstMonster);
+                }
+            }
         }
 
-        List<Integer> ids = new ArrayList<>();
-        for (ZombieEntity zombie : found) {
-            LOGGER.info("선택 성공! 좀비 ID: " + zombie.getUuid().toString().substring(0, 5));
-            zombie.setGlowing(true);
-            selectedZombies.add(zombie);
-            ids.add(zombie.getId());
-
-        }
-
-        // 서버로 선택된 ID 목록 전송
-        if (!ids.isEmpty()) {
-            ClientPlayNetworking.send(new SelectUnitPayload(ids));
-        }
-
-        this.isDragging = false;
-        this.dragStartWorldPos = null;
-        LOGGER.info("==== 드래그 종료 처리 완료 ====");
+        // 서버에 선택 정보 동기화 (ID 리스트 전송)
+        List<Integer> ids = selectedUnits.stream().map(Entity::getId).toList();
+        ClientPlayNetworking.send(new SelectUnitPayload(ids));
     }
 
     // 우클릭: 이동 명령 전송
     public void issueMoveCommand(Vec3d targetPos) {
-        if (selectedZombies.isEmpty()) {
-            LOGGER.info("명령을 내릴 좀비가 선택되지 않았습니다.");
-            return;
-        }
+        if (selectedUnits.isEmpty()) return;
 
-        LOGGER.info(String.format("서버로 이동 명령 전송: 유닛 %d마리 -> 좌표 [%.2f, %.2f, %.2f]",
-                selectedZombies.size(), targetPos.x, targetPos.y, targetPos.z));
-
-        for (ZombieEntity zombie : selectedZombies) {
-            // 패킷 전송 로그
-            ClientPlayNetworking.send(new MoveUnitPayload(zombie.getId(), targetPos));
+        for (LivingEntity unit : selectedUnits) {
+            // [규칙 3] 아군 유닛(MingtdUnit)일 때만 이동 패킷 전송
+            if (unit instanceof MingtdUnit) {
+                ClientPlayNetworking.send(new MoveUnitPayload(unit.getId(), targetPos));
+            } else {
+                LOGGER.info("몬스터는 이동시킬 수 없습니다.");
+            }
         }
     }
 
