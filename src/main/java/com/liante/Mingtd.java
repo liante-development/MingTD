@@ -58,13 +58,12 @@ public class Mingtd implements ModInitializer {
     // 1. 유닛의 고유 ID를 상수로 정의
     public static final Identifier DEFENSE_UNIT_ID = Identifier.of("mingtd", "defense_unit");
 
-    // 2. 엔티티 타입 등록
+    // 2. 엔티티 타입 등록 (PathAwareEntity에 맞춰 빌더 수정)
     public static final EntityType<MingtdUnit> MINGTD_UNIT_TYPE = Registry.register(
             Registries.ENTITY_TYPE,
             DEFENSE_UNIT_ID,
-            EntityType.Builder.create((EntityType<MingtdUnit> type, World world) -> new MingtdUnit(type, world), SpawnGroup.CREATURE)
-                    .dimensions(0.6f, 1.95f)
-                    // [보완] 정의한 ID를 사용하여 RegistryKey를 생성
+            EntityType.Builder.create(MingtdUnit::new, SpawnGroup.CREATURE)
+                    .dimensions(0.6f, 1.95f) // 플레이어와 동일한 크기
                     .build(RegistryKey.of(Registries.ENTITY_TYPE.getKey(), DEFENSE_UNIT_ID))
     );
 
@@ -77,7 +76,7 @@ public class Mingtd implements ModInitializer {
         PayloadTypeRegistry.playC2S().register(CameraMovePayload.ID, CameraMovePayload.CODEC);
 
         // onInitialize에서 속성 등록
-        FabricDefaultAttributeRegistry.register(MINGTD_UNIT_TYPE, MingtdUnit.createVindicatorAttributes());
+        FabricDefaultAttributeRegistry.register(MINGTD_UNIT_TYPE, MingtdUnit.createAttributes());
 
         // 날씨 및 시간 고정 로직
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
