@@ -25,12 +25,22 @@ public class UnitSpawner {
         MAGE("§b[법사]", Items.STICK),
         ROGUE("§6[도적]", Items.IRON_AXE);
 
-        final String displayName;
-        final Item defaultItem;
+        // 에러 원인: 이 필드명들이 아래 메서드에서 쓰는 이름과 같아야 합니다.
+        private final String displayName;
+        private final Item defaultItem;
 
-        DefenseUnit(String name, Item item) {
-            this.displayName = name;
-            this.defaultItem = item;
+        DefenseUnit(String displayName, Item defaultItem) {
+            this.displayName = displayName;
+            this.defaultItem = defaultItem;
+        }
+
+        // 호출부에서 'getMainItem'이나 'defaultItem' 중 하나로 통일해야 합니다.
+        public Item getMainItem() {
+            return this.defaultItem;
+        }
+
+        public String getDisplayName() {
+            return this.displayName;
         }
     }
 
@@ -41,15 +51,10 @@ public class UnitSpawner {
             return;
         }
 
-        // 1. [핵심 추가] 랜덤 유닛 결정 로직
-        DefenseUnit[] units = DefenseUnit.values();
-        DefenseUnit selectedUnit = units[world.random.nextInt(units.length)];
-
-        // 2. 커스텀 엔티티 생성
+        DefenseUnit selectedUnit = DefenseUnit.values()[world.random.nextInt(DefenseUnit.values().length)];
         MingtdUnit unitEntity = Mingtd.MINGTD_UNIT_TYPE.create(world, SpawnReason.MOB_SUMMONED);
 
         if (unitEntity != null) {
-            // 위치 설정
             unitEntity.refreshPositionAndAngles(
                     Mingtd.SPAWN_POS.getX() + 0.5,
                     Mingtd.SPAWN_POS.getY() + 1.0,
@@ -57,18 +62,17 @@ public class UnitSpawner {
                     0, 0
             );
 
-            // 3. [수정] 선택된 유닛에 맞는 이름과 아이템 적용
-            unitEntity.setCustomName(Text.literal(selectedUnit.displayName));
+            // 1. 직업 데이터 주입 (내부에서 아이템 장착 + AI 갱신 수행)
+            unitEntity.setUnitType(selectedUnit);
+
+            // 2. 이름 설정
+            unitEntity.setCustomName(Text.literal(selectedUnit.getDisplayName()));
             unitEntity.setCustomNameVisible(true);
 
-            // 주손에 아이템 장착 (직업 구분용)
-            unitEntity.equipStack(EquipmentSlot.MAINHAND, new ItemStack(selectedUnit.defaultItem));
-//            unitEntity.equipStack(EquipmentSlot.MAINHAND, new ItemStack(selectedUnit.defaultItem));
-
+            // 3. 월드에 소환
             world.spawnEntity(unitEntity);
 
-            // 플레이어에게 어떤 직업이 나왔는지 알림
-            player.sendMessage(Text.literal(selectedUnit.displayName + "§a 유닛이 소환되었습니다!"), true);
+            player.sendMessage(Text.literal(selectedUnit.getDisplayName() + "§a 유닛이 소환되었습니다!"), true);
         }
     }
 }

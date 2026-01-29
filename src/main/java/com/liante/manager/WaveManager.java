@@ -6,6 +6,7 @@ import com.liante.mixin.MobEntityAccessor;
 import net.minecraft.command.argument.EntityAnchorArgumentType;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.entity.effect.StatusEffectInstance;
 import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.entity.mob.ZombieEntity;
@@ -65,12 +66,18 @@ public class WaveManager {
             // 또는 아예 화염 저항 상태 효과 부여 (더 확실함)
             monster.addStatusEffect(new StatusEffectInstance(StatusEffects.FIRE_RESISTANCE, -1, 0, false, false));
 
-            // [핵심] 블록 통과 및 물리 무시 설정
-            monster.noClip = true;           // 블록 통과 허용
-            monster.setNoGravity(true);      // 바닥으로 추락 방지 (noClip 시 필수)
-            monster.setInvulnerable(true);   // 블록 안에서 질식사 방지
-            monster.setSilent(true);
+            // [수정] 현재 클래스에 존재하는 속성만 설정
+            // 1. 넉백 저항: 1.0 (100%)으로 설정하여 화살에 맞아도 뒤로 밀리지 않게 함
+            monster.getAttributeInstance(EntityAttributes.KNOCKBACK_RESISTANCE).setBaseValue(1.0);
 
+            // 2. 이동 속도: TD 밸런스에 맞춰 고정 (예: 0.23)
+            monster.getAttributeInstance(EntityAttributes.MOVEMENT_SPEED).setBaseValue(0.23);
+
+
+            monster.noClip = false;
+            monster.setNoGravity(true);
+            monster.setInvulnerable(false);
+            monster.setSilent(true);
             monster.setAiDisabled(false);
 
             // [해결] 팀 설정을 통한 물리적 충돌 제거
@@ -152,16 +159,18 @@ public class WaveManager {
             if (distance < 1.0) {
                 setMonsterTarget(monster, currentIndex + 1);
             } else {
-                // 3. [물리 무시 이동] 좌표 직접 세팅 (Teleport 방식의 부드러운 이동)
-                // 초당 약 4~5블록 이동 속도 (0.2D)
+                // 1. 이동 속도 설정 (0.2D 수준의 부드러운 이동)
                 double moveSpeed = 0.2;
-                monster.setPos(
-                        monster.getX() + direction.x * moveSpeed,
-                        ty, // Y축 고정 (추락 방지)
-                        monster.getZ() + direction.z * moveSpeed
-                );
+                Vec3d velocity = direction.multiply(moveSpeed);
 
-                // 좀비가 가는 방향을 바라보게 설정
+                // 2. setPos 대신 setVelocity 사용
+                // 이렇게 하면 서버와 클라이언트가 '이 방향으로 움직이는 중'임을 공유하여 부드러워집니다.
+                monster.setVelocity(velocity);
+
+                // 3. 물리 패킷 동기화를 위해 velocityDirty 설정 (필요 시)
+                monster.velocityDirty = true;
+
+                // 시선 처리는 유지
                 Vec3d lookTarget = new Vec3d(tx, monster.getEyeY(), tz);
                 monster.lookAt(EntityAnchorArgumentType.EntityAnchor.EYES, lookTarget);
             }
