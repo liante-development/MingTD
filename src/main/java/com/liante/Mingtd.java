@@ -277,19 +277,13 @@ public class Mingtd implements ModInitializer {
                 // 만약 몬스터(ZombieEntity)가 패킷으로 들어와도 여기서 차단됨
                 if (entity instanceof MingtdUnit unit) {
                     Vec3d target = payload.targetPos();
+                    // 전용 메서드 호출로 상태 관리와 이동을 동시에 처리
+                    unit.startManualMove(target.x, target.y + 1.0D, target.z, 1.3D);
 
-                    // 유닛 이동 명령 수행 (지면 위 1.0 보정)
-                    boolean success = unit.getNavigation().startMovingTo(
-                            target.x, target.y + 1.0D, target.z, 1.3D
-                    );
-
-                    // 몬스터 추적 AI 초기화
-                    unit.setTarget(null);
-
-                    // LOGGER.info("[MingTD] 아군 유닛 이동 명령: " + (success ? "성공" : "실패"));
+                    LOGGER.info("[MingTD] 수동 이동 모드 활성화: {}", target);
                 } else if (entity instanceof ZombieEntity) {
                     // 몬스터 이동 시도 시 로그 (선택 사항)
-                    System.out.println("[Warning] 몬스터 이동 명령 거부됨: " + entity.getId());
+                    LOGGER.info("[Warning] 몬스터 이동 명령 거부됨: " + entity.getId());
                 }
             });
         });
@@ -414,7 +408,7 @@ public class Mingtd implements ModInitializer {
             // 3. 이전 값과 현재 값을 비교
             if (previousCount != currentCount) {
                 state.markDirty(); // 값이 변했을 때만 저장 예약
-                LOGGER.info("💾 [데이터 변경] 몬스터 수: {} -> {} (저장 예약 완료)", previousCount, currentCount);
+//                LOGGER.info("💾 [데이터 변경] 몬스터 수: {} -> {} (저장 예약 완료)", previousCount, currentCount);
             } else {
                 // 디버깅이 끝나면 이 else 문은 지우셔도 됩니다.
                 // LOGGER.info("ℹ️ 변화 없음: {}마리 유지 중", currentCount);

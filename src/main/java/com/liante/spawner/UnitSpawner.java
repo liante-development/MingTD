@@ -20,28 +20,27 @@ import net.minecraft.util.math.Vec3d;
 
 public class UnitSpawner {
     public enum DefenseUnit {
-        WARRIOR("§f[전사]", Items.IRON_SWORD),
-        ARCHER("§e[궁수]", Items.BOW),
-        MAGE("§b[법사]", Items.STICK),
-        ROGUE("§6[도적]", Items.IRON_AXE);
+        WARRIOR("§f[전사]", Items.IRON_SWORD, 8.0f, 4.0f),  // 대미지 8, 사거리 4
+        ARCHER("§e[궁수]", Items.BOW, 5.0f, 16.0f),       // 대미지 5, 사거리 16
+        MAGE("§b[법사]", Items.STICK, 12.0f, 12.0f),      // 대미지 12, 사거리 12
+        ROGUE("§6[도적]", Items.IRON_AXE, 6.0f, 6.0f);     // 대미지 6, 사거리 6
 
-        // 에러 원인: 이 필드명들이 아래 메서드에서 쓰는 이름과 같아야 합니다.
         private final String displayName;
         private final Item defaultItem;
+        private final float damage;  // 추가
+        private final float range;   // 추가
 
-        DefenseUnit(String displayName, Item defaultItem) {
+        DefenseUnit(String displayName, Item defaultItem, float damage, float range) {
             this.displayName = displayName;
             this.defaultItem = defaultItem;
+            this.damage = damage;
+            this.range = range;
         }
 
-        // 호출부에서 'getMainItem'이나 'defaultItem' 중 하나로 통일해야 합니다.
-        public Item getMainItem() {
-            return this.defaultItem;
-        }
-
-        public String getDisplayName() {
-            return this.displayName;
-        }
+        public Item getMainItem() { return this.defaultItem; }
+        public String getDisplayName() { return this.displayName; }
+        public float getDamage() { return this.damage; } // Getter 추가
+        public float getRange() { return this.range; }   // Getter 추가
     }
 
     public static void spawnRandomUnit(ServerPlayerEntity player, ServerWorld world) {

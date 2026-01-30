@@ -1,5 +1,6 @@
 package com.liante;
 
+import com.liante.spawner.UnitSpawner;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.world.PersistentState;
@@ -8,6 +9,10 @@ import net.minecraft.server.world.ServerWorld;
 import net.minecraft.datafixer.DataFixTypes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 public class DefenseState extends PersistentState {
     private static final Logger LOGGER = LoggerFactory.getLogger("MingTD-Debug");
@@ -21,6 +26,8 @@ public class DefenseState extends PersistentState {
     public int monsterCount = 0;
 
     private int wispCount = 0; // 위습 자원
+    // DefenseState 클래스 내부 예시
+    private final Map<UUID, UnitSpawner.DefenseUnit> unitData = new HashMap<>();
 
     // Codec도 업데이트해야 함 (상태값 추가)
     public static final Codec<DefenseState> CODEC = RecordCodecBuilder.create(instance ->
@@ -28,13 +35,23 @@ public class DefenseState extends PersistentState {
                     Codec.STRING.fieldOf("status").forGetter(s -> s.status.name()),
                     Codec.INT.fieldOf("waveStep").forGetter(s -> s.waveStep),
                     Codec.INT.fieldOf("monsterCount").forGetter(s -> s.monsterCount),
-                    Codec.INT.fieldOf("wispCount").forGetter(s -> s.wispCount)
-            ).apply(instance, (statusName, wave, count, wisp) -> { // wisp 변수명 수정
+                    Codec.INT.fieldOf("wispCount").forGetter(s -> s.wispCount),
+                    // [추가] 유닛 데이터 Map 저장 (UUID 문자열 키와 Enum 이름 값)
+                    Codec.unboundedMap(Codec.STRING, Codec.STRING).fieldOf("unitData").forGetter(s -> {
+                        Map<String, String> map = new HashMap<>();
+                        s.unitData.forEach((uuid, type) -> map.put(uuid.toString(), type.name()));
+                        return map;
+                    })
+            ).apply(instance, (statusName, wave, count, wisp, unitDataMap) -> {
                 DefenseState state = new DefenseState();
                 state.status = GameStatus.valueOf(statusName);
                 state.waveStep = wave;
                 state.monsterCount = count;
-                state.wispCount = wisp; // count 대신 wisp 대입 (버그 수정)
+                state.wispCount = wisp;
+                // [로드] 문자열을 다시 UUID와 Enum으로 복구
+                unitDataMap.forEach((uuidStr, typeName) ->
+                        state.unitData.put(UUID.fromString(uuidStr), UnitSpawner.DefenseUnit.valueOf(typeName))
+                );
                 return state;
             })
     );
@@ -102,5 +119,15 @@ public class DefenseState extends PersistentState {
         });
     }
 
+    public void saveUnitInfo(UUID uuid, UnitSpawner.DefenseUnit type) {
+        unitData.put(uuid, type);
+        this.markDirty(); // 저장 예약
+    }
+
+    public UnitSpawner.DefenseUnit getUnitInfo(UUID uuid) {
+        // 저장된 게 없으면 현재 유닛의 데이터트래커 값을 믿어야 하므로
+        // 여기서는 기본값을 ARCHER로 주지 말고 null 등을 체크하는 것이 안전할 수 있습니다.
+        return unitData.getOrDefault(uuid, null);
+    }
 
 }
