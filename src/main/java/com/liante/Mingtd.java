@@ -4,6 +4,8 @@ import com.liante.config.DefenseConfig;
 import com.liante.manager.CameraMovePayload;
 import com.liante.manager.WaveManager;
 import com.liante.map.MapGenerator;
+import com.liante.network.MultiUnitPayload;
+import com.liante.network.UnitStatPayload;
 import com.liante.spawner.UnitSpawner;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import net.fabricmc.api.ModInitializer;
@@ -17,6 +19,7 @@ import net.fabricmc.fabric.api.object.builder.v1.entity.FabricDefaultAttributeRe
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.SpawnGroup;
+import net.minecraft.entity.mob.HostileEntity;
 import net.minecraft.entity.mob.VindicatorEntity;
 import net.minecraft.entity.mob.ZombieEntity;
 import net.minecraft.entity.passive.VillagerEntity;
@@ -35,6 +38,7 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameMode;
 import net.minecraft.world.World;
@@ -74,6 +78,8 @@ public class Mingtd implements ModInitializer {
         PayloadTypeRegistry.playC2S().register(MoveUnitPayload.ID, MoveUnitPayload.CODEC);
         PayloadTypeRegistry.playC2S().register(SelectUnitPayload.ID, SelectUnitPayload.CODEC);
         PayloadTypeRegistry.playC2S().register(CameraMovePayload.ID, CameraMovePayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(UnitStatPayload.ID, UnitStatPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(MultiUnitPayload.ID, MultiUnitPayload.CODEC);
 
         // onInitialize에서 속성 등록
         FabricDefaultAttributeRegistry.register(MINGTD_UNIT_TYPE, MingtdUnit.createAttributes());
@@ -262,7 +268,47 @@ public class Mingtd implements ModInitializer {
                                         return 1;
                                     })
                             )
-                    )
+                    ).then(CommandManager.literal("debug_pos")
+                            .executes(context -> {
+                                ServerPlayerEntity player = context.getSource().getPlayer();
+                                ServerWorld world = context.getSource().getWorld();
+
+                                // [1.21.2 최신화] world.iterateEntities() 또는 iterateEntities()를 통해 순회
+                                for (Entity entity : world.iterateEntities()) {
+
+//                                    // 1. 살아있는 모든 적대적 몹(Monster/HostileEntity) 찾기
+//                                    // Yarn 1.21.2에서는 HostileEntity가 적대적 몹의 표준 클래스입니다.
+//                                    if (entity instanceof HostileEntity hostile && hostile.isAlive()) {
+//                                        // [수정] getPos() 대신 직접 좌표 메서드 호출 (Yarn 컨벤션)
+//                                        LOGGER.info("[MingtdDebug] 몬스터 포착: {} | 좌표: X={}, Y={}, Z={}",
+//                                                entity.getName().getString(),
+//                                                String.format("%.3f", entity.getX()),
+//                                                String.format("%.3f", entity.getY()),
+//                                                String.format("%.3f", entity.getZ()));
+//
+//                                        // 히트박스 정보 추가 (isPickable 상태 확인 포함)
+//                                        Box box = entity.getBoundingBox();
+//                                        LOGGER.info(" -> 히트박스 범위: [MinY:{}, MaxY:{}] ",
+//                                                box.minY, box.maxY);
+//                                    }
+
+                                    // 2. 아군 유닛 찾기 (MingtdUnit 클래스 타입 체크)
+                                    if (entity instanceof MingtdUnit unit) {
+                                        // [수정] getEntityWorld() 및 좌표 메서드 사용
+                                        LOGGER.info("[MingtdDebug] 유닛 포착: {} | 좌표: X={}, Y={}, Z={}",
+                                                unit.getName().getString(),
+                                                String.format("%.3f", unit.getX()),
+                                                String.format("%.3f", unit.getY()),
+                                                String.format("%.3f", unit.getZ()));
+
+                                        Box box = unit.getBoundingBox();
+                                        // [MingtdDebug] 선택 오류의 주원인인 isPickable 값을 반드시 로그로 확인하세요.
+                                        LOGGER.info(" -> 히트박스 범위: [MinY:{}, MaxY:{}]",
+                                                box.minY, box.maxY);
+                                    }
+                                }
+                                return 1;
+                            }))
             ); // dispatcher.register 닫기
         }); // Event.register 닫기
 
@@ -292,15 +338,14 @@ public class Mingtd implements ModInitializer {
         ServerPlayNetworking.registerGlobalReceiver(SelectUnitPayload.ID, (payload, context) -> {
             context.server().execute(() -> {
                 ServerWorld world = (ServerWorld) context.player().getEntityWorld();
+                ServerPlayerEntity player = context.player();
                 Scoreboard scoreboard = context.server().getScoreboard();
                 Team team = scoreboard.getTeam("selected_units");
                 if (team == null) return;
 
-                // [핵심] 기존 모든 좀비의 발광을 끄고 팀에서 제거
-                // team.getPlayerList()를 직접 순회하면 ConcurrentModificationException이 날 수 있으므로 복사해서 사용
+                // 1. 기존 팀 초기화 및 발광 해제
                 List<String> toRemove = new ArrayList<>(team.getPlayerList());
                 for (String name : toRemove) {
-                    // 월드에서 해당 이름을 가진 엔티티를 찾아 발광 해제
                     for (Entity e : world.iterateEntities()) {
                         if (e.getNameForScoreboard().equals(name)) {
                             e.setGlowing(false);
@@ -310,12 +355,43 @@ public class Mingtd implements ModInitializer {
                     scoreboard.removeScoreHolderFromTeam(name, team);
                 }
 
-                // 새로운 좀비 추가
-                for (int id : payload.entityIds()) {
+                // 2. 다중 선택 정보 수집을 위한 리스트
+                List<MultiUnitPayload.UnitEntry> entries = new ArrayList<>();
+                List<Integer> ids = payload.entityIds();
+
+                // 3. 새로운 유닛 추가 및 데이터 수집
+                for (int id : ids) {
                     Entity entity = world.getEntityById(id);
                     if (entity != null) {
                         entity.setGlowing(true);
                         scoreboard.addScoreHolderToTeam(entity.getNameForScoreboard(), team);
+
+                        // HUD용 요약 정보 생성
+                        if (entity instanceof MingtdUnit unit) {
+                            UnitSpawner.DefenseUnit type = unit.getUnitType();
+                            entries.add(new MultiUnitPayload.UnitEntry(
+                                    unit.getId(),
+                                    type.name(),
+                                    type.getDisplayName(),
+                                    type.getPriority() // Enum에 priority 필드 추가 필요
+                            ));
+                        } else if (entity instanceof ZombieEntity zombie) {
+                            entries.add(new MultiUnitPayload.UnitEntry(zombie.getId(), "ZOMBIE", "Monster", 0));
+                        }
+                    }
+                }
+
+                // 4. 우선순위 정렬 (높은 순서대로)
+                entries.sort((a, b) -> Integer.compare(b.priority(), a.priority()));
+
+                // 5. 클라이언트에 다중 유닛 정보 전송 (HUD 갱신)
+                ServerPlayNetworking.send(player, new MultiUnitPayload(entries));
+
+                // 6. [중요] 대표 유닛 상세 정보 전송 (단일 선택창 호환용)
+                if (!entries.isEmpty()) {
+                    Entity firstEntity = world.getEntityById(entries.get(0).entityId());
+                    if (firstEntity instanceof MingtdUnit unit) {
+                        unit.syncUnitStatsToClient(player);
                     }
                 }
             });

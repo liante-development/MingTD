@@ -1,6 +1,10 @@
 package com.liante.client;
 
+import com.liante.MingtdUnit;
 import com.liante.manager.CameraMovePayload;
+import com.liante.network.MultiUnitPayload;
+import com.liante.network.UnitStatPayload;
+import com.mojang.blaze3d.systems.RenderSystem;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.Click;
@@ -8,30 +12,44 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.screen.ingame.InventoryScreen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.input.KeyInput;
 import net.minecraft.client.render.Camera;
 import net.minecraft.client.util.InputUtil;
-import net.minecraft.client.util.Window;
+import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.projectile.ProjectileUtil;
 import net.minecraft.text.Text;
+import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.RaycastContext;
+import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
+import org.joml.Vector4f;
 import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+
+import static com.mojang.text2speech.Narrator.LOGGER;
 
 public class RtsScreen extends Screen {
     // 1. 로그 기록을 위한 Logger 선언
     private static final Logger LOGGER = LoggerFactory.getLogger("MingTD-RTS");
 
     private final SelectionManager selectionManager;
+    private UnitStatPayload selectedUnit; // 현재 선택된 유닛 정보
+    // 다중 선택 유닛 정보를 담을 리스트 (MultiUnitPayload.UnitEntry 사용)
+    private List<MultiUnitPayload.UnitEntry> unitList = new ArrayList<>();
+    // 현재 포커스된 유닛 인덱스 (Tab 키로 순환)
+    private int currentIndex = 0;
 
     // 클래스 내부에 정적 변수 추가
     public static boolean isChatting = false;
@@ -43,10 +61,45 @@ public class RtsScreen extends Screen {
 
     @Override
     public boolean mouseClicked(Click click, boolean doubled) {
+        LOGGER.info("[MingtdDebug] mouseClicked (Screen): x={}, y={}, button={}",
+                click.x(), click.y(), click.button());
+
         Vec3d mouseWorldPos = getMouseWorldPos(click.x(), click.y());
+
+        if (mouseWorldPos != null) {
+            // [분석 주석]
+            // 현재 수집된 유닛 좌표(Y=100)와 마우스가 찍은 지점(mouseWorldPos)을 비교.
+            // 레이가 Y=146에서 Y=100까지 수직에 가깝게 꽂히므로,
+            // 엔티티의 히트박스(높이 1.95)를 고려한 '원통형' 혹은 '엔티티 전용 레이캐스트'가 없으면
+            // 픽셀 단위로 정확히 유닛의 발을 찍지 않는 한 선택이 실패합니다.
+
+            LOGGER.info("[MingtdDebug] 최종 지면 판정 좌표: X={}, Y={}, Z={}",
+                    mouseWorldPos.x, mouseWorldPos.y, mouseWorldPos.z);
+        }
+
+        // 1. HUD 영역 클릭 체크 (클릭이 HUD 패널 위라면 조작 무시)
+        int centerX = this.width / 2;
+        int bottomY = this.height - 60;
+        boolean isClickOnHud = click.x() >= centerX - 120 && click.x() <= centerX + 120
+                && click.y() >= bottomY;
+
+//        if (isClickOnHud) {
+//            return true; // HUD 클릭 시 월드 상호작용 차단
+//        }
+
+        // 2. 허공(땅) 클릭 시 HUD 타겟 해제 (스타크래프트 방식)
+        // selectionManager가 유닛을 잡지 못했을 때를 대비해 여기서 처리하거나
+        // selectionManager 내부에서 선택된 유닛이 없을 때 selectedUnit을 null로 만듭니다.
+        if (click.button() == 0) {
+            this.selectedUnit = null;
+            this.unitList.clear(); // 다중 선택 리스트도 초기화
+        }
+
+        // 3. 기존 RTS 조작 로직 실행
+//        Vec3d mouseWorldPos = getMouseWorldPos(click.x(), click.y());
         if (mouseWorldPos == null) return false;
 
-        if (click.button() == 0) { // 좌클릭 시작
+        if (click.button() == 0) { // 좌클릭 시작 (드래그)
             selectionManager.startDragging(mouseWorldPos, click.x(), click.y());
             return true;
         }
@@ -54,6 +107,7 @@ public class RtsScreen extends Screen {
             selectionManager.issueMoveCommand(mouseWorldPos);
             return true;
         }
+
         return super.mouseClicked(click, doubled);
     }
 
@@ -68,7 +122,7 @@ public class RtsScreen extends Screen {
                 // SelectionManager에 드래그 종료 알림 및 유닛 선택 확정
                 selectionManager.endDragging(mouseWorldPos);
             }
-
+            selectionManager.stopDragging();
             // 화면 자체의 드래그 상태 해제 (상위 클래스 필드)
             this.setDragging(false);
             return true;
@@ -106,53 +160,261 @@ public class RtsScreen extends Screen {
 
     // 마우스 커서 위치의 '지면' 좌표를 구하는 유틸리티
     private Vec3d getMouseWorldPos(double mouseX, double mouseY) {
-        Camera camera = client.gameRenderer.getCamera();
+        Vec3d start = client.player.getEyePos();
         Vec3d rayDir = getRayFromClick(mouseX, mouseY);
-        Vec3d start = camera.getCameraPos();
-        Vec3d end = start.add(rayDir.multiply(200.0));
+        double maxDistance = 200.0;
+        Vec3d end = start.add(rayDir.multiply(maxDistance));
 
-        // 1. 카메라 정보 및 레이 방향 설정
-        Vec3d cameraPos = camera.getCameraPos();
-        // camera 정보 로깅 추가
-        LOGGER.info(String.format("카메라 위치: [X:%.2f, Y:%.2f, Z:%.2f]",
-                cameraPos.x, cameraPos.y, cameraPos.z));
-        LOGGER.info(String.format("카메라 회전: Yaw=%.2f, Pitch=%.2f",
-                camera.getYaw(), camera.getPitch()));
-        LOGGER.info(String.format("마우스 좌표: X=%f, Y=%f", mouseX, mouseY));
-        LOGGER.info(String.format("레이 방향: [X:%.3f, Y:%.3f, Z:%.3f]",
-                rayDir.x, rayDir.y, rayDir.z));
-        LOGGER.info("3인칭 모드: " + camera.isThirdPerson());
-        // 카메라 전방 벡터 확인
-        Vector3f forward = (Vector3f) camera.getHorizontalPlane();
-        LOGGER.info(String.format("전방 벡터: [X:%.3f, Y:%.3f, Z:%.3f]",
-                forward.x(), forward.y(), forward.z()));
+        // 1. 수동 엔티티 관통 판정 (모든 유닛의 히트박스 전수 조사)
+        Entity closestEntity = null;
+        double minDistance = maxDistance;
 
-        HitResult hit = client.world.raycast(new RaycastContext(
-                start, end, RaycastContext.ShapeType.COLLIDER,
-                RaycastContext.FluidHandling.NONE, client.player));
+        // 주변 엔티티 목록 수집 (범위를 충분히 확장)
+        Box searchBox = new Box(start, end).expand(0.3);
+        List<Entity> targetEntities = client.world.getEntitiesByClass(Entity.class, searchBox, (entity) ->
+                !entity.isSpectator() && entity.isAlive() && (entity instanceof net.minecraft.entity.LivingEntity || entity instanceof MingtdUnit)
+        );
 
-        return hit.getType() == HitResult.Type.BLOCK ? hit.getPos() : null;
+        for (Entity entity : targetEntities) {
+            float delta = client.getRenderTickCounter().getTickProgress(false);
+            // 1. 눈에 보이는 부드러운 위치(Lerp) 계산
+            double lerpX = net.minecraft.util.math.MathHelper.lerp(delta, entity.lastRenderX, entity.getX());
+            double lerpY = net.minecraft.util.math.MathHelper.lerp(delta, entity.lastRenderY, entity.getY());
+            double lerpZ = net.minecraft.util.math.MathHelper.lerp(delta, entity.lastRenderZ, entity.getZ());
+
+            // 2. 보간된 위치로 박스 이동
+            Box renderBox = entity.getBoundingBox()
+                    .offset(lerpX - entity.getX(), lerpY - entity.getY(), lerpZ - entity.getZ())
+                    .expand(0.7);
+
+            Optional<Vec3d> hitPos = renderBox.raycast(start, end);
+
+            // [로그] 델타값과 좌표 차이 출력
+            if (entity instanceof MingtdUnit || entity instanceof net.minecraft.entity.mob.ZombieEntity) {
+                double diffX = Math.abs(lerpX - entity.getX());
+                double diffZ = Math.abs(lerpZ - entity.getZ());
+
+                LOGGER.info(String.format("[MingtdLerp] Delta: %.4f | 대상: %s", delta, entity.getName().getString()));
+                LOGGER.info(String.format("  - 서버 위치: [%.2f, %.2f]", entity.getX(), entity.getZ()));
+                LOGGER.info(String.format("  - 렌더 위치: [%.2f, %.2f] (차이: %.4f)", lerpX, lerpZ, diffX + diffZ));
+            }
+
+            if (hitPos.isPresent()) {
+                double dist = start.distanceTo(hitPos.get());
+                if (dist < minDistance) {
+                    minDistance = dist;
+                    closestEntity = entity;
+                }
+            }
+        }
+
+        if (closestEntity != null) {
+            LOGGER.info(String.format("[MingtdRay] 수동 관통 성공! 대상: %s", closestEntity.getName().getString()));
+            // getPos() 에러 방지를 위해 좌표 직접 추출
+            return new Vec3d(closestEntity.getX(), closestEntity.getY(), closestEntity.getZ());
+        }
+
+        // 2. 엔티티를 못 맞췄을 경우 지면 판정
+        HitResult blockHit = client.world.raycast(new net.minecraft.world.RaycastContext(
+                start, end, net.minecraft.world.RaycastContext.ShapeType.OUTLINE,
+                net.minecraft.world.RaycastContext.FluidHandling.NONE, client.player));
+
+        if (blockHit.getType() == HitResult.Type.BLOCK) {
+            return blockHit.getPos();
+        }
+
+        return null;
+    }
+
+    public void updateTarget(UnitStatPayload payload) {
+//        LOGGER.info("[MingTD] HUD 데이터 수신 성공: " + payload.name());
+        this.selectedUnit = payload;
+    }
+
+    public void updateMultiTarget(MultiUnitPayload payload) {
+        this.unitList = new ArrayList<>(payload.units());
+        this.currentIndex = 0;
+        // 로그 추가
+//        LOGGER.info("[MingTD] RtsScreen unitList 업데이트 완료. 현재 개수: " + this.unitList.size());
     }
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+        // 1. [필수] 시스템 렌더링 엔진 초기화 (배경 암전 포함)
+        super.render(context, mouseX, mouseY, delta);
+
         // 배경 제외 렌더링
         renderRtsHud(context);
 
-        // 드래그 박스 시각화 (선택 사항)
         if (selectionManager.isDragging()) {
-            renderSelectionBox(context, mouseX, mouseY);
+            int startX = (int) selectionManager.getStartX();
+            int startY = (int) selectionManager.getStartY();
+
+            // 드래그 방향에 상관없이 좌표 정렬 (min/max)
+            int minX = Math.min(startX, mouseX);
+            int minY = Math.min(startY, mouseY);
+            int maxX = Math.max(startX, mouseX);
+            int maxY = Math.max(startY, mouseY);
+
+            // 2. 테두리 그리기 (제공해주신 0xFFFFFFFF 흰색 로직 적용)
+            int borderColor = 0xFF00FF00;
+            context.fill(minX - 1, minY - 1, maxX + 1, minY, borderColor);         // 상단
+            context.fill(minX - 1, maxY, maxX + 1, maxY + 1, borderColor);         // 하단
+            context.fill(minX - 1, minY, minX, maxY, borderColor);                 // 좌측
+            context.fill(maxX, minY, maxX + 1, maxY, borderColor);                 // 우측
+
+            // 2. 내부: 매우 옅은 초록색 반투명 - 0x2200FF00 (약 13% 투명도)
+            // 0x33보다 더 투명하게 하여 내부 유닛 가독성을 높였습니다.
+            context.fill(minX, minY, maxX, maxY, 0x2200FF00);
+        }
+
+        if (!unitList.isEmpty()) {
+            renderUnitHUD(context, (float)mouseX, (float)mouseY);
         }
     }
 
-    // 1. 드래그 박스 렌더링 (마우스 클릭 시작점부터 현재 커서까지 사각형 그리기)
-    private void renderSelectionBox(DrawContext context, int mouseX, int mouseY) {
-        if (this.selectionManager.getDragStart() == null) return;
+    private void renderUnitHUD(DrawContext context, float mouseX, float mouseY) {
+        if (unitList.isEmpty()) return;
 
-        // 드래그 시작 지점의 '화면 좌표'가 필요합니다.
-        // 하지만 현재 selectionManager는 '월드 좌표'를 저장하고 있으므로,
-        // 가장 간단한 방법은 mouseClicked 시점의 screenX, screenY를 저장해두는 것입니다.
-        // (아래 팁 섹션의 '드래그 좌표 수정' 참고)
+        // 1명일 때는 기존 상세 HUD (큰 초상화 버전)
+        if (unitList.size() == 1 && selectedUnit != null) {
+            renderSingleUnitDetails(context, mouseX, mouseY);
+        }
+        // 2명 이상일 때는 스타크래프트형 격자 HUD
+        else {
+            renderMultiUnitGrid(context, mouseX, mouseY);
+        }
+    }
+
+    private void renderMultiUnitGrid(DrawContext context, float mouseX, float mouseY) {
+        if (unitList == null || unitList.isEmpty()) return;
+
+        int width = this.client.getWindow().getScaledWidth();
+        int height = this.client.getWindow().getScaledHeight();
+
+        int iconSize = 30;
+        int gap = 4;
+        int maxIcons = Math.min(unitList.size(), 24);
+        int columns = Math.min(maxIcons, 12);
+        int totalWidth = (iconSize + gap) * columns - gap;
+        int startX = (width / 2) - (totalWidth / 2);
+        int baseY = height - 45;
+
+        for (int i = 0; i < maxIcons; i++) {
+            int row = i / 12;
+            int col = i % 12;
+            int x = startX + (col * (iconSize + gap));
+            int y = baseY - (row * (iconSize + gap));
+
+            MultiUnitPayload.UnitEntry entry = unitList.get(i);
+
+            // 1. 배경
+            context.fill(x, y, x + iconSize, y + iconSize, 0xAA000000);
+
+            // 2. 아바타 렌더링 (왼쪽 고정 시선)
+            Entity entity = this.client.world.getEntityById(entry.entityId());
+            if (entity instanceof LivingEntity livingEntity) {
+                float prevBodyYaw = livingEntity.bodyYaw;
+                float prevHeadYaw = livingEntity.headYaw;
+                float prevPitch = livingEntity.getPitch();
+
+                livingEntity.bodyYaw = 210.0F;
+                livingEntity.headYaw = 210.0F;
+                livingEntity.setPitch(0.0F);
+
+                net.minecraft.client.gui.screen.ingame.InventoryScreen.drawEntity(
+                        context,
+                        x + 2, y + 2, x + iconSize - 2, y + iconSize - 2,
+                        12,
+                        0.0625f,
+                        (float)(x + 15) - 50,
+                        (float)(y + 15),
+                        livingEntity
+                );
+
+                livingEntity.bodyYaw = prevBodyYaw;
+                livingEntity.headYaw = prevHeadYaw;
+                livingEntity.setPitch(prevPitch);
+            }
+
+            // 3. 유닛 이름 출력 (DefenseUnit의 색상 코드를 그대로 사용)
+            String displayName = entry.name();
+            int textWidth = this.textRenderer.getWidth(displayName);
+            // 텍스트 자체에 색상 코드가 있으므로 0xFFFFFFFF(기본 흰색)를 넘겨도 본래 색으로 출력됩니다.
+            context.drawTextWithShadow(this.textRenderer, displayName, x + (iconSize / 2) - (textWidth / 2), y + iconSize - 9, 0xFFFFFFFF);
+
+            // 4. Tab 강조 (이미 별도 메소드로 구현됨)
+            if (i == currentIndex) {
+                renderSelectionHighlight(context, x, y, iconSize);
+            }
+        }
+    }
+
+    // 가독성을 위해 테두리 로직 분리
+    private void renderSelectionHighlight(DrawContext context, int x, int y, int size) {
+        context.fill(x - 1, y - 1, x + size + 1, y, 0xFFFFFFFF);
+        context.fill(x - 1, y + size, x + size + 1, y + size + 1, 0xFFFFFFFF);
+        context.fill(x - 1, y, x, y + size, 0xFFFFFFFF);
+        context.fill(x + size, y, x + size + 1, y + size, 0xFFFFFFFF);
+        context.fill(x, y, x + size, y + size, 0x33FFFFFF);
+    }
+
+    private void renderSingleUnitDetails(DrawContext context, float mouseX, float mouseY) {
+        if (unitList.isEmpty()) return;
+        if (selectedUnit == null) return;
+        MultiUnitPayload.UnitEntry mainUnit = unitList.get(0);
+
+        int width = this.client.getWindow().getScaledWidth();
+        int height = this.client.getWindow().getScaledHeight();
+
+        // 1. HUD 베이스 설정 (하단 중앙)
+        int hudW = 220; // 전체 너비
+        int hudH = 54;  // 전체 높이
+        int hudX = (width / 2) - (hudW / 2); // 중앙 정렬
+        int hudY = height - hudH - 5;        // 하단에서 5픽셀 띄움
+
+        // 2. 배경 사각형 (스타크래프트 특유의 어두운 패널 느낌)
+        context.fill(hudX, hudY, hudX + hudW, hudY + hudH, 0xCC000000); // 메인 패널
+        context.fill(hudX, hudY, hudX + hudW, hudY + 1, 0xFF555555);    // 상단 테두리 선
+
+        // 월드에서 실제 엔티티 객체를 가져와 렌더링
+        // 3. 유닛 아바타 영역 (좌측)
+        Entity entity = this.client.world.getEntityById(mainUnit.entityId());
+        if (entity instanceof LivingEntity livingEntity) {
+            // 공유해주신 1.21.2 시그니처에 맞춘 인자 전달
+            // drawEntity(context, x1, y1, x2, y2, size, scale, mouseX, mouseY, entity)
+            net.minecraft.client.gui.screen.ingame.InventoryScreen.drawEntity(
+                    context,
+                    hudX + 5, hudY + 5, hudX + 45, hudY + 45, // 사각형 범위 (x1, y1, x2, y2)
+                    20,       // size (모델 크기)
+                    0.0625f,  // scale (기본 오프셋 보정)
+                    mouseX,   // 전달받은 마우스 X
+                    mouseY,   // 전달받은 마우스 Y
+                    livingEntity
+            );
+        } else {
+            // 엔티티를 찾지 못했을 때의 대체 텍스트
+            context.fill(hudX + 5, hudY + 5, hudX + 45, hudY + 45, 0xFF222222);
+            context.drawTextWithShadow(this.textRenderer, "No Ent", hudX + 10, hudY + 22, 0xFF666666);
+        }
+        // 4. 유닛 이름 및 마나 바 (중앙)
+        int infoX = hudX + 50;
+        context.drawTextWithShadow(this.textRenderer, "§l" + mainUnit.name(), infoX, hudY + 8, 0xFFFFFFFF);
+        // 마나 바 디자인
+        int barW = 100;
+        int barH = 5;
+        float manaRatio = selectedUnit.currentMana() / selectedUnit.maxMana();
+
+        context.fill(infoX, hudY + 20, infoX + barW, hudY + 20 + barH, 0xFF333333); // 바 배경
+        context.fill(infoX, hudY + 20, infoX + (int)(barW * manaRatio), hudY + 20 + barH, 0xFF00AAFF); // 푸른색 마나
+
+        String manaText = String.format("%.0f/%.0f", selectedUnit.currentMana(), selectedUnit.maxMana());
+        context.drawText(this.textRenderer, "§b" + manaText, infoX, hudY + 28, 0xFFFFFFFF, false);
+
+        // 5. 스탯 정보 (우측)
+        int statX = hudX + 155;
+        context.drawTextWithShadow(this.textRenderer, "§eATK: " + (int)selectedUnit.currentDamage(), statX, hudY + 15, 0xFFFFFFFF);
+        context.drawTextWithShadow(this.textRenderer, "§bSPD: " + String.format("%.1f", selectedUnit.attackSpeed()), statX, hudY + 27, 0xFFFFFFFF);
     }
 
     // 2. RTS 하단/상단 HUD 렌더링
@@ -160,23 +422,23 @@ public class RtsScreen extends Screen {
         int width = this.client.getWindow().getScaledWidth();
         int height = this.client.getWindow().getScaledHeight();
 
-        // 상단 검은색 바 (상태 표시용)
+        // 1. 상단 검은색 바 (투명도 0x88 반영)
         context.fill(0, 0, width, 25, 0x88000000);
-        context.drawTextWithShadow(this.textRenderer, "MingTD RTS Mode", 10, 8, 0xFFFFFF);
 
-        // 선택된 유닛 수 표시
+        // 2. 상단 텍스트 (Alpha 0xFF 추가)
+        // "MingTD RTS Mode" - 흰색 (0xFFFFFFFF)
+        context.drawTextWithShadow(this.textRenderer, "MingTD RTS Mode", 10, 8, 0xFFFFFFFF);
+
+        // 선택된 유닛 수 표시 - 녹색 (0xFF00FF00)
         int selectedCount = selectionManager.getSelectedCount();
-        context.drawTextWithShadow(this.textRenderer, "Units Selected: " + selectedCount, width - 120, 8, 0x00FF00);
+        String countText = "Units Selected: " + selectedCount;
+        context.drawTextWithShadow(this.textRenderer, countText, width - this.textRenderer.getWidth(countText) - 10, 8, 0xFF00FF00);
 
-        // 하단 조작 가이드
-        context.drawTextWithShadow(this.textRenderer, "[L-Click] Select / [R-Click] Move", 10, height - 20, 0xAAAAAA);
+        // 3. 하단 조작 가이드 - 회색 (0xFFAAAAAA)
+        // 위치를 하단 끝에서 살짝 위로 조정 (20 -> 25)
+//        context.drawTextWithShadow(this.textRenderer, "[L-Click] Select / [R-Click] Move", 10, height - 25, 0xFFAAAAAA);
     }
 
-
-//    public RtsScreen() {
-//        super(Text.literal("RTS Control Screen"));
-//    }
-//
     @Override
     protected void init() {
         super.init();
@@ -186,41 +448,21 @@ public class RtsScreen extends Screen {
             this.client.mouse.unlockCursor();
             LOGGER.info("마우스 커서 해제 시도 완료");
         }
-
-        // 화면 왼쪽 하단에 리셋 버튼 추가
-        this.addDrawableChild(ButtonWidget.builder(Text.literal("게임 리셋"), button -> {
-                    // 서버로 리셋 패킷 전송 (MoveUnitPayload 같은 방식으로 커스텀 패킷 정의 필요)
-                    // ClientPlayNetworking.send(new ResetGamePayload());
-
-                    // 임시로 명령어를 직접 실행하게 하고 싶다면:
-                    if (this.client != null && this.client.player != null) {
-                        this.client.player.networkHandler.sendChatCommand("mingtd reset");
-                    }
-                })
-                .dimensions(10, this.height - 30, 80, 20) // 위치 및 크기
-                .build());
+//
+//        // 화면 왼쪽 하단에 리셋 버튼 추가
+//        this.addDrawableChild(ButtonWidget.builder(Text.literal("게임 리셋"), button -> {
+//                    // 서버로 리셋 패킷 전송 (MoveUnitPayload 같은 방식으로 커스텀 패킷 정의 필요)
+//                    // ClientPlayNetworking.send(new ResetGamePayload());
+//
+//                    // 임시로 명령어를 직접 실행하게 하고 싶다면:
+//                    if (this.client != null && this.client.player != null) {
+//                        this.client.player.networkHandler.sendChatCommand("mingtd reset");
+//                    }
+//                })
+//                .dimensions(10, this.height - 30, 80, 20) // 위치 및 크기
+//                .build());
     }
-//
-////    @Override
-////    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-////        // 화면이 작동 중인지 실시간으로 텍스트 표시 (왼쪽 상단)
-////        context.drawTextWithShadow(this.textRenderer, "RTS Mode: Active", 10, 10, 0xFFFFFF);
-////        context.drawTextWithShadow(this.textRenderer, "Mouse: " + mouseX + ", " + mouseY, 10, 20, 0xAAAAAA);
-////    }
-//    @Override
-//    public void renderBackground(DrawContext context, int mouseX, int mouseY, float delta) {
-//        // 아무것도 하지 않음으로써 배경이 검게 변하는 것을 막고 게임 화면을 그대로 노출합니다.
-//    }
-//
-//    @Override
-//    public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-//        // super.render(context, mouseX, mouseY, delta); // 이 줄이 배경을 검게 만들 수 있으므로 주석 처리하거나 확인이 필요합니다.
-//
-//        // 화면 작동 여부 확인용 텍스트만 직접 그림
-//        context.drawTextWithShadow(this.textRenderer, "RTS MODE: ACTIVE", 10, 10, 0xFFFFFF);
-//        context.drawTextWithShadow(this.textRenderer, "Mouse: " + mouseX + ", " + mouseY, 10, 20, 0xAAAAAA);
-//    }
-//
+
     // 화면을 닫을 때 다시 마우스를 잠궈주는 것이 매너입니다.
     @Override
     public void close() {
@@ -230,145 +472,39 @@ public class RtsScreen extends Screen {
         }
         super.close();
     }
-//
-//    @Override
-//    public boolean mouseClicked(Click click, boolean doubled) {
-//        if (this.client == null || this.client.player == null || this.client.world == null) return false;
-//
-//        if (click.button() == 0) { // 좌클릭
-//            LOGGER.info("==== RTS 카메라 시점 레이캐스트 시작 ====");
-//
-//            // 1. 카메라 정보 및 레이 방향 설정
-//            Camera camera = this.client.gameRenderer.getCamera();
-//            Vec3d cameraPos = camera.getCameraPos();
-//            Vec3d mouseRayDir = getRayFromClick(click.x(), click.y());
-//
-//            // camera 정보 로깅 추가
-//            LOGGER.info(String.format("카메라 위치: [X:%.2f, Y:%.2f, Z:%.2f]",
-//                    cameraPos.x, cameraPos.y, cameraPos.z));
-//            LOGGER.info(String.format("카메라 회전: Yaw=%.2f, Pitch=%.2f",
-//                    camera.getYaw(), camera.getPitch()));
-//            LOGGER.info(String.format("마우스 좌표: X=%d, Y=%d", click.x(), click.y()));
-//            LOGGER.info(String.format("레이 방향: [X:%.3f, Y:%.3f, Z:%.3f]",
-//                    mouseRayDir.x, mouseRayDir.y, mouseRayDir.z));
-//            LOGGER.info("3인칭 모드: " + camera.isThirdPerson());
-//            // 카메라 전방 벡터 확인
-//            Vector3f forward = (Vector3f) camera.getHorizontalPlane();
-//            LOGGER.info(String.format("전방 벡터: [X:%.3f, Y:%.3f, Z:%.3f]",
-//                    forward.x(), forward.y(), forward.z()));
-//
-//            double maxDistance = 200.0D;
-//            Vec3d endPos = cameraPos.add(mouseRayDir.multiply(maxDistance));
-//
-//            // 2. 일차적인 ProjectileUtil 레이캐스트 시도
-//            Box selectionBox = new Box(cameraPos, endPos).expand(2.0D);
-//            EntityHitResult entityHit = ProjectileUtil.raycast(
-//                    this.client.player,
-//                    cameraPos,
-//                    endPos,
-//                    selectionBox,
-//                    entity -> entity instanceof ZombieEntity && !entity.isRemoved(),
-//                    maxDistance * maxDistance
-//            );
-//
-//            if (entityHit != null) {
-//                LOGGER.info("결과: 좀비 직접 클릭 성공! ID: " + entityHit.getEntity().getUuid().toString().substring(0, 5));
-//            } else {
-//                // 3. 직접 클릭 실패 시 보정 로직 호출
-//                ZombieEntity closest = checkManualSelection(cameraPos, mouseRayDir, selectionBox);
-//
-//                if (closest != null) {
-//                    LOGGER.info("결과: [보정 성공] 근처 좀비 클릭! ID: " + closest.getUuid().toString().substring(0, 5));
-//                } else {
-//                    // 4. 좀비가 없으면 지형 확인
-//                    checkBlockHit(cameraPos, endPos);
-//                }
-//            }
-//
-//            LOGGER.info("==== RTS 레이캐스트 종료 ====");
-//            return true;
-//        }
-//        return super.mouseClicked(click, doubled);
-//    }
-//
-//    /**
-//     * 레이(Ray)와 엔티티 사이의 거리를 계산하여 가장 가까운 좀비를 반환하는 보정 메서드
-//     */
-//    private ZombieEntity checkManualSelection(Vec3d cameraPos, Vec3d mouseRayDir, Box selectionBox) {
-//        ZombieEntity closestZombie = null;
-//        double tolerance = 1.5D; // 클릭 인정 범위 (블록 단위)
-//
-//        List<ZombieEntity> zombies = this.client.world.getEntitiesByClass(
-//                ZombieEntity.class,
-//                selectionBox,
-//                e -> !e.isRemoved()
-//        );
-//
-//        for (ZombieEntity zombie : zombies) {
-//            Vec3d zombiePos = zombie.getBoundingBox().getCenter();
-//
-//            // 카메라에서 좀비를 향하는 벡터
-//            Vec3d targetVec = zombiePos.subtract(cameraPos);
-//
-//            // 레이 방향 벡터와 좀비 위치 벡터 사이의 수직 거리(Cross Product 이용) 계산
-//            // 수식: |dir x target| / |dir|
-//            double dist = mouseRayDir.crossProduct(targetVec).length();
-//
-//            if (dist < tolerance) {
-//                tolerance = dist;
-//                closestZombie = zombie;
-//            }
-//        }
-//        return closestZombie;
-//    }
-//
-//    /**
-//     * 지형 클릭 디버깅용 메서드
-//     */
-//    private void checkBlockHit(Vec3d start, Vec3d end) {
-//        HitResult blockHit = this.client.world.raycast(new net.minecraft.world.RaycastContext(
-//                start, end,
-//                RaycastContext.ShapeType.VISUAL,
-//                RaycastContext.FluidHandling.NONE,
-//                this.client.player
-//        ));
-//
-//        if (blockHit != null && blockHit.getType() == HitResult.Type.BLOCK) {
-//            BlockHitResult bhr = (BlockHitResult) blockHit;
-//            LOGGER.info("결과: 좀비 없음, 블록 클릭됨: " + bhr.getBlockPos().toShortString());
-//        } else {
-//            LOGGER.info("결과: 허공 클릭");
-//        }
-//    }
-//
+
     private Vec3d getRayFromClick(double mouseX, double mouseY) {
         MinecraftClient client = MinecraftClient.getInstance();
 
-        // 1. 마우스 위치를 화면 비율로 정규화 (-1.0 ~ 1.0)
-        float x = (float)((2.0D * mouseX) / client.getWindow().getScaledWidth() - 1.0D);
-        float y = (float)(1.0D - (2.0D * mouseY) / client.getWindow().getScaledHeight());
+        // 1. 마우스 정규화 (NDC: -1.0 ~ 1.0)
+        float nx = (float) ((2.0D * mouseX) / client.getWindow().getScaledWidth() - 1.0D);
+        float ny = (float) (1.0D - (2.0D * mouseY) / client.getWindow().getScaledHeight());
 
-        // 2. 카메라의 회전 정보를 가져옴
-        // 마인크래프트의 공식적인 카메라 회전 쿼터니언입니다.
-        Quaternionf rotation = client.gameRenderer.getCamera().getRotation();
-
-        // 3. 로컬 방향 벡터 (마우스 위치 투영)
-        // FOV를 반영하기 위해 tan(fov/2)를 곱해줍니다.
+        // 2. 현재 렌더링에 사용된 Projection 행렬 가져오기
+        // FOV와 AspectRatio가 모두 포함된 엔진의 행렬을 직접 사용합니다.
         float fov = client.options.getFov().getValue().floatValue();
-        float tanHalfFov = (float) Math.tan(Math.toRadians(fov / 2.0));
-        float aspectRatio = (float)client.getWindow().getScaledWidth() / client.getWindow().getScaledHeight();
+        Matrix4f projMatrix = client.gameRenderer.getBasicProjectionMatrix(fov);
 
-        // 마우스 커서 방향의 로컬 벡터 생성
-        Vector3f localRay = new Vector3f(
-                x * tanHalfFov * aspectRatio,
-                y * tanHalfFov,
-                -1.0f // 마인크래프트는 -Z가 앞쪽입니다.
-        );
+        // 3. 카메라 회전 행렬 구성
+        // 카메라가 바라보는 방향을 월드로 되돌리는 회전 행렬입니다.
+        Quaternionf rotation = new Quaternionf(client.gameRenderer.getCamera().getRotation());
+        Matrix4f viewMatrix = new Matrix4f().rotation(rotation);
 
-        // 4. 카메라 회전(쿼터니언)을 로컬 벡터에 적용하여 월드 방향으로 변환
-        rotation.transform(localRay);
+        // 4. 역행렬 계산 (화면 -> 월드 방향 변환)
+        // Projection과 View를 결합한 뒤 뒤집어서 마우스 좌표를 쏩니다.
+        Matrix4f combinedInverse = new Matrix4f(projMatrix).mul(viewMatrix).invert();
 
-        return new Vec3d(localRay.x(), localRay.y(), localRay.z()).normalize();
+        // 5. 레이 방향 산출 (-Z가 앞쪽)
+        Vector4f rayDir = new Vector4f(nx, ny, -1.0f, 1.0f);
+        rayDir.mul(combinedInverse);
+
+        Vec3d finalDir = new Vec3d(rayDir.x(), rayDir.y(), rayDir.z()).normalize();
+
+        // 디버그 로그: 카메라가 이동해도 이 벡터는 마우스 위치에 따라 정확히 변해야 합니다.
+        LOGGER.info(String.format("[MingtdMatrix] 레이 방향: X:%.3f, Y:%.3f, Z:%.3f",
+                finalDir.x, finalDir.y, finalDir.z));
+
+        return finalDir;
     }
 
     // 일부 매핑에서 배경을 어둡게 하는 투명도를 결정하는 메서드
@@ -404,6 +540,20 @@ public class RtsScreen extends Screen {
                 // 이렇게 하면 관전자 모드 시점으로 나가지 않고 바로 메뉴가 뜹니다.
                 this.client.setScreen(new GameMenuScreen(true));
             }
+            return true;
+        }
+
+        if (input.key() == org.lwjgl.glfw.GLFW.GLFW_KEY_TAB && !unitList.isEmpty()) {
+            // 1. 인덱스 순환
+            this.currentIndex = (this.currentIndex + 1) % unitList.size();
+
+            // 2. [추가] 강조된 유닛의 상세 정보를 서버에 요청 (또는 서버가 보낸 리스트에서 추출)
+            // 대표 유닛이 바뀌었으므로 상세 정보를 다시 가져와야 합니다.
+            MultiUnitPayload.UnitEntry mainEntry = unitList.get(this.currentIndex);
+
+            // 서버에 이 유닛의 상세 정보를 달라고 요청하는 패킷 전송 (선택 사항)
+//             ClientPlayNetworking.send(new RequestUnitDetailPayload(mainEntry.entityId()));
+
             return true;
         }
 

@@ -1,11 +1,14 @@
 package com.liante;
 
+import com.liante.network.UnitStatPayload;
 import com.liante.spawner.UnitSpawner;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.ai.RangedAttackMob;
+import net.minecraft.entity.ai.TargetPredicate;
 import net.minecraft.entity.ai.goal.ActiveTargetGoal;
 import net.minecraft.entity.ai.goal.ProjectileAttackGoal;
 import net.minecraft.entity.attribute.DefaultAttributeContainer;
@@ -17,6 +20,7 @@ import net.minecraft.entity.data.TrackedDataHandlerRegistry;
 import net.minecraft.entity.mob.HostileEntity;
 import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.entity.mob.PathAwareEntity;
+import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.projectile.ArrowEntity;
 import net.minecraft.entity.projectile.ProjectileEntity;
 import net.minecraft.entity.projectile.SmallFireballEntity;
@@ -28,9 +32,13 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvents;
+import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
+
+import java.util.List;
 
 import static com.mojang.text2speech.Narrator.LOGGER;
 
@@ -71,11 +79,54 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
             }
         }
 
-        // [수정] 모든 world 참조를 getEntityWorld()로 통일
-        if (!this.getEntityWorld().isClient() && this.age % 50 == 0) {
-            LivingEntity target = this.getTarget();
-            if (target != null) {
-                LOGGER.info("🔍 타겟: {} | 거리: {}", target.getType().getName().getString(), this.distanceTo(target));
+        if (!this.getEntityWorld().isClient()) {
+            // [원인 해결] 재접속 시 무효화된 target을 실시간으로 복구
+            if (this.getTarget() == null || !this.getTarget().isAlive()) {
+                float range = this.getUnitType().getRange();
+                // 탐색 범위를 로그로 확인하기 위해 변수화
+                Box searchBox = this.getBoundingBox().expand(range);
+
+                List<LivingEntity> targets = this.getEntityWorld().getEntitiesByClass(
+                        LivingEntity.class,
+                        searchBox,
+                        entity -> entity.isAlive() && !entity.isSpectator() && entity != this
+                );
+
+                // [로그 1] 주변에 살아있는 LivingEntity가 몇 마리나 검출되는지 확인
+                if (!targets.isEmpty()) {
+//                    LOGGER.info("[MingtdDebug] {} 주변 엔티티 발견: {}마리 (탐색범위: {})",
+//                            this.getUnitType().name(), targets.size(), range);
+                }
+
+                LivingEntity closest = null;
+                double minDistance = Double.MAX_VALUE;
+
+                for (LivingEntity entity : targets) {
+                    // [로그 2] 발견된 엔티티의 타입을 출력하여 좀비 판정 로직 확인
+                    if (entity.getType() == EntityType.ZOMBIE) {
+                        double dist = this.squaredDistanceTo(entity);
+
+                        // [로그 3] 좀비와의 실제 거리 출력
+//                        LOGGER.info("[MingtdDebug] 좀비 포착! 거리: {}m", Math.sqrt(dist));
+
+                        if (dist < minDistance) {
+                            minDistance = dist;
+                            closest = entity;
+                        }
+                    } else {
+                        // 좀비가 아닌 다른 엔티티(다른 유닛 등)가 잡혔을 때
+//                        LOGGER.info("[MingtdDebug] 좀비가 아닌 엔티티 무시: {}", entity.getType().getName().getString());
+                    }
+                }
+
+                if (closest != null) {
+                    this.setTarget(closest);
+//                    LOGGER.info("[MingtdDebug] === {} 타겟 재포착 성공: {} ===",
+//                            this.getUnitType().name(), closest.getName().getString());
+                } else if (!targets.isEmpty()) {
+                    // 엔티티는 찾았지만 좀비가 하나도 없을 때
+//                    LOGGER.warn("[MingtdDebug] 주변에 엔티티는 있으나 유효한 좀비 타겟이 없음");
+                }
             }
         }
     }
@@ -97,7 +148,7 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
         }
 
         this.refreshGoals();
-        LOGGER.info("[MingtdDebug] 타입 설정 및 저장 완료: {}", type.name());
+//        LOGGER.info("[MingtdDebug] 타입 설정 및 저장 완료: {}", type.name());
     }
 
     public UnitSpawner.DefenseUnit getUnitType() {
@@ -126,7 +177,7 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
     public void shootAt(LivingEntity target, float pullProgress) {
         UnitSpawner.DefenseUnit type = this.getUnitType();
         // [로그 1] 현재 공격을 시도하는 유닛의 실제 타입 확인
-        LOGGER.info("[MingtdDebug] 유닛 타입: {} | 타겟: {}", type.name(), target.getType().getName().getString());
+//        LOGGER.info("[MingtdDebug] 유닛 타입: {} | 타겟: {}", type.name(), target.getType().getName().getString());
 
         if (!(this.getEntityWorld() instanceof ServerWorld world)) return;
 
@@ -134,11 +185,11 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
 
         if (type == UnitSpawner.DefenseUnit.WARRIOR || type == UnitSpawner.DefenseUnit.ROGUE) {
             // [로그 2] 근접 직업 분기 진입 확인
-            LOGGER.info("[MingtdDebug] {} 직업 - applyInstantDamage 실행", type.name());
+//            LOGGER.info("[MingtdDebug] {} 직업 - applyInstantDamage 실행", type.name());
             applyInstantDamage(world, target, type, damage);
         } else {
             // [로그 3] 원거리 직업 분기 진입 및 전달되는 타입 확인
-            LOGGER.info("[MingtdDebug] {} 직업 - spawnHomingProjectile 진입", type.name());
+//            LOGGER.info("[MingtdDebug] {} 직업 - spawnHomingProjectile 진입", type.name());
             spawnHomingProjectile(world, target, type, damage);
         }
         this.swingHand(Hand.MAIN_HAND);
@@ -165,19 +216,21 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
         if (type == UnitSpawner.DefenseUnit.ARCHER) {
             MingtdArrow arrow = new MingtdArrow(world, this, target);
             arrow.setDamage(damage);
+            // 화살 전용 유도 설정 (기존 로직 유지)
             this.setupHoming(arrow, target, 1.8F);
             world.spawnEntity(arrow);
         }
         else if (type == UnitSpawner.DefenseUnit.MAGE) {
-            double dx = target.getX() - this.getX();
-            double dy = target.getBodyY(0.5) - this.getEyeY();
-            double dz = target.getZ() - this.getZ();
-            Vec3d dir = new Vec3d(dx, dy, dz).normalize();
+            // 생성자에서 damage 값을 넘겨주도록 변경
+            MingtdMagicMissile missile = new MingtdMagicMissile(world, this, target, damage);
 
-            SmallFireballEntity fireball = new SmallFireballEntity(world, this, dir);
-            fireball.refreshPositionAndAngles(this.getX(), this.getEyeY(), this.getZ(), this.getYaw(), this.getPitch());
+            Vec3d dir = target.getBoundingBox().getCenter().subtract(this.getEyePos()).normalize();
+            missile.refreshPositionAndAngles(this.getX() + dir.x, this.getEyeY() + dir.y, this.getZ() + dir.z, this.getYaw(), this.getPitch());
 
-            world.spawnEntity(fireball);
+            missile.setVelocity(dir.multiply(1.5));
+            world.spawnEntity(missile);
+
+            this.playSound(SoundEvents.ENTITY_BLAZE_SHOOT, 1.0f, 1.0f);
         }
     }
 
@@ -237,5 +290,41 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
             return false;
         }
         return super.damage(world, source, amount);
+    }
+
+    @Override
+    public ActionResult interact(PlayerEntity player, Hand hand) {
+        // 클라이언트/서버 상관없이 무조건 로그를 찍어 호출 여부 확인
+//        LOGGER.info("[MingTD] interact 호출됨! 클라이언트 여부: " + this.getEntityWorld().isClient());
+
+        if (!this.getEntityWorld().isClient() && player instanceof ServerPlayerEntity serverPlayer) {
+//            LOGGER.info("[MingTD] 서버에서 유닛 데이터 전송 시도: " + this.getUnitType().name());
+            this.syncUnitStatsToClient(serverPlayer);
+            return ActionResult.SUCCESS;
+        }
+        return super.interact(player, hand);
+    }
+
+
+    public void syncUnitStatsToClient(ServerPlayerEntity player) {
+        // 1. Enum에서 기본 정보 가져오기
+        UnitSpawner.DefenseUnit unitType = this.getUnitType(); // 현재 유닛의 타입을 반환하는 getter가 필요합니다.
+
+        // 2. 실시간 스탯 계산 (현재는 마나 필드가 없으므로 임시값 100을 사용, 향후 필드 추가 필요)
+        float currentMana = 50.0f;  // TODO: 유닛 필드로 mana 추가 필요
+        float maxMana = 100.0f;
+        float currentDamage = unitType.getDamage(); // 향후 버프 시스템 연동 시 수정
+        float attackSpeed = 1.0f;   // 향후 공속 시스템 연동 시 수정
+
+        // 3. 패킷 전송
+        ServerPlayNetworking.send(player, new UnitStatPayload(
+                this.getId(),
+                unitType.getDisplayName(),
+                currentMana,
+                maxMana,
+                currentDamage,
+                attackSpeed,
+                unitType.name()
+        ));
     }
 }

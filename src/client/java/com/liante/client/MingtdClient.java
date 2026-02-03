@@ -2,6 +2,8 @@ package com.liante.client;
 
 import com.liante.Mingtd;
 import com.liante.manager.CameraMovePayload;
+import com.liante.network.MultiUnitPayload;
+import com.liante.network.UnitStatPayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -10,6 +12,8 @@ import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.entity.VindicatorEntityRenderer;
+
+import static com.mojang.text2speech.Narrator.LOGGER;
 
 public class MingtdClient implements ClientModInitializer {
     private static boolean shouldReturnToRts = false;
@@ -21,6 +25,29 @@ public class MingtdClient implements ClientModInitializer {
         ClientPlayNetworking.registerGlobalReceiver(Mingtd.OpenRtsScreenPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
                 context.client().setScreen(new RtsScreen());
+            });
+        });
+
+        // MingtdClient.java 내부에 추가
+        ClientPlayNetworking.registerGlobalReceiver(UnitStatPayload.ID, (payload, context) -> {
+            System.out.println("[MingTD] 패킷 수신 성공! 대상 ID: " + payload.entityId()); // 로그 추가
+            context.client().execute(() -> {
+                if (context.client().currentScreen instanceof RtsScreen rtsScreen) {
+                    rtsScreen.updateTarget(payload);
+                } else {
+                    LOGGER.info("[MingTD] 현재 RtsScreen이 열려있지 않아 데이터를 표시할 수 없습니다."); // 로그 추가
+                }
+            });
+        });
+
+        ClientPlayNetworking.registerGlobalReceiver(MultiUnitPayload.ID, (payload, context) -> {
+            // 로그 추가: 패킷이 도착했는지 확인
+//            System.out.println("[MingTD] 다중 유닛 패킷 수신! 유닛 수: " + payload.units().size());
+
+            context.client().execute(() -> {
+                if (context.client().currentScreen instanceof RtsScreen rtsScreen) {
+                    rtsScreen.updateMultiTarget(payload);
+                }
             });
         });
 
