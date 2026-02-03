@@ -145,6 +145,6 @@ public class UnitSpawner {
             world.spawnEntity(unitEntity);
 
             player.sendMessage(Text.literal(selectedUnit.getDisplayName() + "§a 유닛이 소환되었습니다!"), true);
-//        }
+        }
     }
 }
