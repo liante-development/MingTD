@@ -1,0 +1,8 @@
+{
+  "base_id": "normal_warrior",
+  "ingredients": {
+    "normal_warrior": 3
+  },
+  "result_id": "magic_warrior",
+  "comment": "일반 전사 3마리가 모이면 매직 전사 1마리로 승급"
+}

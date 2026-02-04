@@ -8,7 +8,6 @@ import net.minecraft.entity.EntityType;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.ai.RangedAttackMob;
-import net.minecraft.entity.ai.TargetPredicate;
 import net.minecraft.entity.ai.goal.ActiveTargetGoal;
 import net.minecraft.entity.ai.goal.ProjectileAttackGoal;
 import net.minecraft.entity.attribute.DefaultAttributeContainer;
@@ -21,16 +20,11 @@ import net.minecraft.entity.mob.HostileEntity;
 import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.entity.mob.PathAwareEntity;
 import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.entity.projectile.ArrowEntity;
 import net.minecraft.entity.projectile.ProjectileEntity;
-import net.minecraft.entity.projectile.SmallFireballEntity;
 import net.minecraft.item.ItemStack;
-import net.minecraft.item.Items;
-import net.minecraft.nbt.NbtCompound;
 import net.minecraft.particle.ParticleTypes;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
-import net.minecraft.sound.SoundCategory;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
@@ -46,6 +40,8 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
     private static final TrackedData<Integer> UNIT_TYPE = DataTracker.registerData(MingtdUnit.class, TrackedDataHandlerRegistry.INTEGER);
     // MingtdUnit.java 내부
     private boolean isManualMoving = false;
+    // 1. 유닛 정보를 저장할 필드 추가
+    private UnitSpawner.DefenseUnit unitType;
 
     public MingtdUnit(EntityType<? extends PathAwareEntity> type, World world) {
         super(type, world);
@@ -60,6 +56,16 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
                 .add(EntityAttributes.ATTACK_DAMAGE, 1.0)
                 .add(EntityAttributes.STEP_HEIGHT, 0.6);
     }
+
+    // 4. ID를 바로 가져오는 편의 메서드
+    public String getUnitId() {
+        UnitSpawner.DefenseUnit type = this.getUnitType();
+        if (type != null) {
+            return type.getId(); // Enum에 정의한 "normal_warrior" 등을 반환
+        }
+        return "unknown";
+    }
+
 
     @Override
     protected void initGoals() {

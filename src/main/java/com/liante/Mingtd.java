@@ -2,6 +2,7 @@ package com.liante;
 
 import com.liante.config.DefenseConfig;
 import com.liante.manager.CameraMovePayload;
+import com.liante.manager.UpgradeManager;
 import com.liante.manager.WaveManager;
 import com.liante.map.MapGenerator;
 import com.liante.network.MultiUnitPayload;
@@ -201,7 +202,7 @@ public class Mingtd implements ModInitializer {
                                 state.status = DefenseState.GameStatus.RUNNING;
                                 state.waveStep = 1;
                                 state.monsterCount = 0;
-                                state.setWispCount(5); // 기본 위습 지급
+                                state.setWispCount(20); // 기본 위습 지급
                                 state.markDirty();
 
                                 // 4. 맵 재생성
@@ -267,8 +268,13 @@ public class Mingtd implements ModInitializer {
                                                 Text.literal("§a카메라 높이가 §e" + newHeight + "§a로 변경되었습니다."), false);
                                         return 1;
                                     })
-                            )
-                    ).then(CommandManager.literal("debug_pos")
+                        ))
+                    .then(CommandManager.literal("upgrade")
+                            .executes(context -> {
+                                UpgradeManager.tryUpgrade(context.getSource().getPlayer());
+                                return 1;
+                        }))
+                    .then(CommandManager.literal("debug_pos")
                             .executes(context -> {
                                 ServerPlayerEntity player = context.getSource().getPlayer();
                                 ServerWorld world = context.getSource().getWorld();
