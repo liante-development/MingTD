@@ -1,4 +1,4 @@
-package com.liante;
+package com.liante.renderer;
 
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;

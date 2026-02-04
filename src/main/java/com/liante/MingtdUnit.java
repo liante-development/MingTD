@@ -1,6 +1,9 @@
 package com.liante;
 
+import com.liante.config.DefenseState;
 import com.liante.network.UnitStatPayload;
+import com.liante.renderer.MingtdArrow;
+import com.liante.renderer.MingtdMagicMissile;
 import com.liante.spawner.UnitSpawner;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.entity.Entity;
@@ -33,8 +36,6 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 
 import java.util.List;
-
-import static com.mojang.text2speech.Narrator.LOGGER;
 
 public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
     private static final TrackedData<Integer> UNIT_TYPE = DataTracker.registerData(MingtdUnit.class, TrackedDataHandlerRegistry.INTEGER);

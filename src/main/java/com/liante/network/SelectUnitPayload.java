@@ -1,4 +1,4 @@
-package com.liante;
+package com.liante.network;
 
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;

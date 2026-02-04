@@ -1,4 +1,4 @@
-package com.liante;
+package com.liante.config;
 
 import com.liante.spawner.UnitSpawner;
 import com.mojang.serialization.Codec;

@@ -1,6 +1,6 @@
 package com.liante.manager;
 
-import com.liante.DefenseState;
+import com.liante.config.DefenseState;
 import com.liante.config.DefenseConfig;
 import com.liante.mixin.MobEntityAccessor;
 import net.minecraft.command.argument.EntityAnchorArgumentType;

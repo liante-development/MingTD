@@ -1,8 +1,8 @@
 package com.liante.client;
 
 import com.liante.MingtdUnit;
-import com.liante.MoveUnitPayload;
-import com.liante.SelectUnitPayload;
+import com.liante.network.MoveUnitPayload;
+import com.liante.network.SelectUnitPayload;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
