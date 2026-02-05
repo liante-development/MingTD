@@ -10,6 +10,7 @@ import com.liante.network.MoveUnitPayload;
 import com.liante.network.MultiUnitPayload;
 import com.liante.network.SelectUnitPayload;
 import com.liante.network.UnitStatPayload;
+import com.liante.recipe.UpgradeRecipeLoader;
 import com.liante.spawner.UnitSpawner;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import net.fabricmc.api.ModInitializer;
@@ -20,6 +21,9 @@ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.fabric.api.object.builder.v1.entity.FabricDefaultAttributeRegistry;
+import net.fabricmc.fabric.api.resource.IdentifiableResourceReloadListener;
+import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
+import net.fabricmc.fabric.api.resource.v1.ResourceLoader;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityType;
 import net.minecraft.entity.SpawnGroup;
@@ -30,6 +34,8 @@ import net.minecraft.network.packet.CustomPayload;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKey;
+import net.minecraft.resource.ResourceManager;
+import net.minecraft.resource.ResourceType;
 import net.minecraft.scoreboard.*;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.command.CommandManager;
@@ -47,6 +53,8 @@ import net.minecraft.world.rule.GameRules;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 import static com.mojang.text2speech.Narrator.LOGGER;
 
@@ -80,6 +88,11 @@ public class Mingtd implements ModInitializer {
         PayloadTypeRegistry.playC2S().register(CameraMovePayload.ID, CameraMovePayload.CODEC);
         PayloadTypeRegistry.playS2C().register(UnitStatPayload.ID, UnitStatPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(MultiUnitPayload.ID, MultiUnitPayload.CODEC);
+
+        ResourceLoader.get(ResourceType.SERVER_DATA).registerReloader(
+                Identifier.of("mingtd", "upgrades"),
+                new UpgradeRecipeLoader()
+        );
 
         // onInitialize에서 속성 등록
         FabricDefaultAttributeRegistry.register(MINGTD_UNIT_TYPE, MingtdUnit.createAttributes());
@@ -270,7 +283,7 @@ public class Mingtd implements ModInitializer {
                         ))
                     .then(CommandManager.literal("upgrade")
                             .executes(context -> {
-                                UpgradeManager.tryUpgrade(context.getSource().getPlayer());
+//                                UpgradeManager.tryUpgrade(context.getSource().getPlayer());
                                 return 1;
                         }))
                     .then(CommandManager.literal("debug_pos")
@@ -300,16 +313,16 @@ public class Mingtd implements ModInitializer {
                                     // 2. 아군 유닛 찾기 (MingtdUnit 클래스 타입 체크)
                                     if (entity instanceof MingtdUnit unit) {
                                         // [수정] getEntityWorld() 및 좌표 메서드 사용
-                                        LOGGER.info("[MingtdDebug] 유닛 포착: {} | 좌표: X={}, Y={}, Z={}",
-                                                unit.getName().getString(),
-                                                String.format("%.3f", unit.getX()),
-                                                String.format("%.3f", unit.getY()),
-                                                String.format("%.3f", unit.getZ()));
+//                                        LOGGER.info("[MingtdDebug] 유닛 포착: {} | 좌표: X={}, Y={}, Z={}",
+//                                                unit.getName().getString(),
+//                                                String.format("%.3f", unit.getX()),
+//                                                String.format("%.3f", unit.getY()),
+//                                                String.format("%.3f", unit.getZ()));
 
                                         Box box = unit.getBoundingBox();
                                         // [MingtdDebug] 선택 오류의 주원인인 isPickable 값을 반드시 로그로 확인하세요.
-                                        LOGGER.info(" -> 히트박스 범위: [MinY:{}, MaxY:{}]",
-                                                box.minY, box.maxY);
+//                                        LOGGER.info(" -> 히트박스 범위: [MinY:{}, MaxY:{}]",
+//                                                box.minY, box.maxY);
                                     }
                                 }
                                 return 1;
@@ -331,10 +344,10 @@ public class Mingtd implements ModInitializer {
                     // 전용 메서드 호출로 상태 관리와 이동을 동시에 처리
                     unit.startManualMove(target.x, target.y + 1.0D, target.z, 1.3D);
 
-                    LOGGER.info("[MingTD] 수동 이동 모드 활성화: {}", target);
+//                    LOGGER.info("[MingTD] 수동 이동 모드 활성화: {}", target);
                 } else if (entity instanceof ZombieEntity) {
                     // 몬스터 이동 시도 시 로그 (선택 사항)
-                    LOGGER.info("[Warning] 몬스터 이동 명령 거부됨: " + entity.getId());
+//                    LOGGER.info("[Warning] 몬스터 이동 명령 거부됨: " + entity.getId());
                 }
             });
         });

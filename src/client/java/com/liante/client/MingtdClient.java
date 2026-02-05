@@ -35,7 +35,7 @@ public class MingtdClient implements ClientModInitializer {
                 if (context.client().currentScreen instanceof RtsScreen rtsScreen) {
                     rtsScreen.updateTarget(payload);
                 } else {
-                    LOGGER.info("[MingTD] 현재 RtsScreen이 열려있지 않아 데이터를 표시할 수 없습니다."); // 로그 추가
+//                    LOGGER.info("[MingTD] 현재 RtsScreen이 열려있지 않아 데이터를 표시할 수 없습니다."); // 로그 추가
                 }
             });
         });

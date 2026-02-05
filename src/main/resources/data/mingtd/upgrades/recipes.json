@@ -1,0 +1,27 @@
+[
+  {
+    "baseId": "warrior_v1",
+    "ingredients": { "WARRIOR": 3 },
+    "resultId": "MAGIC_WARRIOR"
+  },
+  {
+    "baseId": "warrior_v2",
+    "ingredients": { "WARRIOR": 2, "ARCHER": 1 },
+    "resultId": "MAGIC_WARRIOR"
+  },
+  {
+    "baseId": "warrior_v3",
+    "ingredients": { "WARRIOR": 1, "ARCHER": 2 },
+    "resultId": "MAGIC_WARRIOR"
+  },
+  {
+    "baseId": "archer_v1",
+    "ingredients": { "ARCHER": 3 },
+    "resultId": "MAGIC_ARCHER"
+  },
+  {
+    "baseId": "mage_v1",
+    "ingredients": { "MAGE": 2 },
+    "resultId": "MAGIC_MAGE"
+  }
+]

@@ -158,8 +158,8 @@ public class UnitSpawner {
 
             unitEntity.refreshPositionAndAngles(spawnX, spawnY, spawnZ, 0, 0);
             // [로그 추가] 소환 정보 출력
-            LOGGER.info(String.format("[MingtdSpawn] 유닛 소환: %s | 위치: [X:%.2f, Y:%.2f, Z:%.2f]",
-                    selectedUnit.getDisplayName(), spawnX, spawnY, spawnZ));
+//            LOGGER.info(String.format("[MingtdSpawn] 유닛 소환: %s | 위치: [X:%.2f, Y:%.2f, Z:%.2f]",
+//                    selectedUnit.getDisplayName(), spawnX, spawnY, spawnZ));
 
             // 1. 직업 데이터 주입 (내부에서 아이템 장착 + AI 갱신 수행)
             unitEntity.setUnitType(selectedUnit);

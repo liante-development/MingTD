@@ -4,6 +4,8 @@ import com.liante.MingtdUnit;
 import com.liante.manager.CameraMovePayload;
 import com.liante.network.MultiUnitPayload;
 import com.liante.network.UnitStatPayload;
+import com.liante.recipe.UpgradeRecipe;
+import com.liante.recipe.UpgradeRecipeLoader;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
@@ -36,6 +38,7 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static com.mojang.text2speech.Narrator.LOGGER;
@@ -61,8 +64,8 @@ public class RtsScreen extends Screen {
 
     @Override
     public boolean mouseClicked(Click click, boolean doubled) {
-        LOGGER.info("[MingtdDebug] mouseClicked (Screen): x={}, y={}, button={}",
-                click.x(), click.y(), click.button());
+//        LOGGER.info("[MingtdDebug] mouseClicked (Screen): x={}, y={}, button={}",
+//                click.x(), click.y(), click.button());
 
         Vec3d mouseWorldPos = getMouseWorldPos(click.x(), click.y());
 
@@ -73,8 +76,8 @@ public class RtsScreen extends Screen {
             // 엔티티의 히트박스(높이 1.95)를 고려한 '원통형' 혹은 '엔티티 전용 레이캐스트'가 없으면
             // 픽셀 단위로 정확히 유닛의 발을 찍지 않는 한 선택이 실패합니다.
 
-            LOGGER.info("[MingtdDebug] 최종 지면 판정 좌표: X={}, Y={}, Z={}",
-                    mouseWorldPos.x, mouseWorldPos.y, mouseWorldPos.z);
+//            LOGGER.info("[MingtdDebug] 최종 지면 판정 좌표: X={}, Y={}, Z={}",
+//                    mouseWorldPos.x, mouseWorldPos.y, mouseWorldPos.z);
         }
 
         // 1. HUD 영역 클릭 체크 (클릭이 HUD 패널 위라면 조작 무시)
@@ -194,9 +197,9 @@ public class RtsScreen extends Screen {
                 double diffX = Math.abs(lerpX - entity.getX());
                 double diffZ = Math.abs(lerpZ - entity.getZ());
 
-                LOGGER.info(String.format("[MingtdLerp] Delta: %.4f | 대상: %s", delta, entity.getName().getString()));
-                LOGGER.info(String.format("  - 서버 위치: [%.2f, %.2f]", entity.getX(), entity.getZ()));
-                LOGGER.info(String.format("  - 렌더 위치: [%.2f, %.2f] (차이: %.4f)", lerpX, lerpZ, diffX + diffZ));
+//                LOGGER.info(String.format("[MingtdLerp] Delta: %.4f | 대상: %s", delta, entity.getName().getString()));
+//                LOGGER.info(String.format("  - 서버 위치: [%.2f, %.2f]", entity.getX(), entity.getZ()));
+//                LOGGER.info(String.format("  - 렌더 위치: [%.2f, %.2f] (차이: %.4f)", lerpX, lerpZ, diffX + diffZ));
             }
 
             if (hitPos.isPresent()) {
@@ -415,6 +418,46 @@ public class RtsScreen extends Screen {
         int statX = hudX + 155;
         context.drawTextWithShadow(this.textRenderer, "§eATK: " + (int)selectedUnit.currentDamage(), statX, hudY + 15, 0xFFFFFFFF);
         context.drawTextWithShadow(this.textRenderer, "§bSPD: " + String.format("%.1f", selectedUnit.attackSpeed()), statX, hudY + 27, 0xFFFFFFFF);
+
+        logUpgradeRequirements(mainUnit);
+    }
+
+    private void logUpgradeRequirements(MultiUnitPayload.UnitEntry mainUnit) {
+        if (mainUnit == null) return;
+
+        String currentUnitId = mainUnit.jobKey();
+
+        // 1. 해당 유닛이 재료로 포함된 모든 레시피 수집
+        List<UpgradeRecipe> possibleRecipes = new ArrayList<>();
+        for (UpgradeRecipe recipe : UpgradeRecipeLoader.RECIPES.values()) {
+            if (recipe.ingredients().containsKey(currentUnitId)) {
+                possibleRecipes.add(recipe);
+            }
+        }
+
+        // 2. 로그 출력 시작
+        System.out.println("---- [Unit Upgrade Path Check] ----");
+        System.out.println("대상 유닛: " + mainUnit.name() + " (" + currentUnitId + ")");
+
+        if (possibleRecipes.isEmpty()) {
+            System.out.println("결과: 이 유닛으로 시작하는 승급 경로가 없습니다.");
+        } else {
+            System.out.println("총 " + possibleRecipes.size() + "개의 승급 경로 발견:");
+
+            for (UpgradeRecipe recipe : possibleRecipes) {
+                System.out.println("------------------------------------");
+                System.out.println("▶ 경로 ID: " + recipe.baseId()); // v1, v2, v3 구분용
+                System.out.println("▶ 결과물: " + recipe.resultId());
+                System.out.println("▶ 필요 재료:");
+
+                recipe.ingredients().forEach((reqId, reqCount) -> {
+                    // 강조 표시: 현재 유닛인 경우 [본인] 표시
+                    String identity = reqId.equals(currentUnitId) ? " [본인]" : "";
+                    System.out.println("   - " + reqId + " : " + reqCount + "마리" + identity);
+                });
+            }
+        }
+        System.out.println("------------------------------------");
     }
 
     // 2. RTS 하단/상단 HUD 렌더링
@@ -443,10 +486,10 @@ public class RtsScreen extends Screen {
     protected void init() {
         super.init();
         // 화면이 열릴 때 로그 출력
-        LOGGER.info("RTS 화면이 성공적으로 열렸습니다!");
+//        LOGGER.info("RTS 화면이 성공적으로 열렸습니다!");
         if (this.client != null) {
             this.client.mouse.unlockCursor();
-            LOGGER.info("마우스 커서 해제 시도 완료");
+//            LOGGER.info("마우스 커서 해제 시도 완료");
         }
 //
 //        // 화면 왼쪽 하단에 리셋 버튼 추가
@@ -501,8 +544,8 @@ public class RtsScreen extends Screen {
         Vec3d finalDir = new Vec3d(rayDir.x(), rayDir.y(), rayDir.z()).normalize();
 
         // 디버그 로그: 카메라가 이동해도 이 벡터는 마우스 위치에 따라 정확히 변해야 합니다.
-        LOGGER.info(String.format("[MingtdMatrix] 레이 방향: X:%.3f, Y:%.3f, Z:%.3f",
-                finalDir.x, finalDir.y, finalDir.z));
+//        LOGGER.info(String.format("[MingtdMatrix] 레이 방향: X:%.3f, Y:%.3f, Z:%.3f",
+//                finalDir.x, finalDir.y, finalDir.z));
 
         return finalDir;
     }

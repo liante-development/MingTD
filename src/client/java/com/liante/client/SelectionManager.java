@@ -63,7 +63,7 @@ public class SelectionManager {
         // [로그 추가] 박스 크기 계산
         double width = maxX - minX;
         double length = maxZ - minZ;
-        LOGGER.info(String.format("[MingtdBox] 박스 생성 -> 가로(X): %.3f, 세로(Z): %.3f", width, length));
+//        LOGGER.info(String.format("[MingtdBox] 박스 생성 -> 가로(X): %.3f, 세로(Z): %.3f", width, length));
 
 
         // Y축 범위는 맵 지면(100) 기준으로 넉넉히 잡습니다.
@@ -76,7 +76,7 @@ public class SelectionManager {
                 LivingEntity.class, selectionBox, e -> !e.isRemoved() && e.isAlive());
 
         // [로그 추가] 결과 확인
-        LOGGER.info(String.format("[MingtdBox] 최종 박스 범위: %s | 잡힌 유닛 수: %d", selectionBox.toString(), found.size()));
+//        LOGGER.info(String.format("[MingtdBox] 최종 박스 범위: %s | 잡힌 유닛 수: %d", selectionBox.toString(), found.size()));
 
         // [추가] 박스 안에 들어온 유닛들의 상세 좌표 로깅
         for (LivingEntity entity : found) {
@@ -85,8 +85,8 @@ public class SelectionManager {
             double y = entity.getY();
             double z = entity.getZ();
 
-            LOGGER.info(String.format("[MingtdUnitPos] 발견됨: %s | 위치: [X:%.2f, Y:%.2f, Z:%.2f]",
-                    entity.getName().getString(), x, y, z));
+//            LOGGER.info(String.format("[MingtdUnitPos] 발견됨: %s | 위치: [X:%.2f, Y:%.2f, Z:%.2f]",
+//                    entity.getName().getString(), x, y, z));
         }
 
 
@@ -118,7 +118,7 @@ public class SelectionManager {
 
         // [추가] 최종적으로 선택 리스트에 담긴 유닛들 확인
         if (!selectedUnits.isEmpty()) {
-            LOGGER.info(String.format("[MingtdSelection] 최종 선택 확정: %d마리", selectedUnits.size()));
+//            LOGGER.info(String.format("[MingtdSelection] 최종 선택 확정: %d마리", selectedUnits.size()));
         }
 
         // 서버에 선택 정보 동기화 (ID 리스트 전송)
