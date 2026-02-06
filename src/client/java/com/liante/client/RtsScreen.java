@@ -36,10 +36,7 @@ import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 
 import static com.mojang.text2speech.Narrator.LOGGER;
 
@@ -56,6 +53,11 @@ public class RtsScreen extends Screen {
 
     // 클래스 내부에 정적 변수 추가
     public static boolean isChatting = false;
+
+    // 전역 또는 클래스 멤버로 선언하여 관리하면 좋습니다.
+    private static final int CARD_W = 70;
+    private static final int CARD_H = 28;
+    private static final int CARD_SPACING = 4;
 
     public RtsScreen() {
         super(Text.literal("RTS Screen"));
@@ -279,12 +281,16 @@ public class RtsScreen extends Screen {
     private void renderUnitHUD(DrawContext context, float mouseX, float mouseY) {
         if (unitList.isEmpty()) return;
 
-        // 1명일 때는 기존 상세 HUD (큰 초상화 버전)
-        if (unitList.size() == 1 && selectedUnit != null) {
-            renderSingleUnitDetails(context, mouseX, mouseY);
+        // [최적화] 모든 렌더링에 필요한 보유량 데이터를 여기서 딱 한 번만 계산합니다.
+        Map<String, Integer> ownedCounts = new HashMap<>();
+        for (MultiUnitPayload.UnitEntry entry : this.unitList) {
+            ownedCounts.put(entry.jobKey(), ownedCounts.getOrDefault(entry.jobKey(), 0) + 1);
         }
-        // 2명 이상일 때는 스타크래프트형 격자 HUD
-        else {
+
+        if (unitList.size() == 1 && selectedUnit != null) {
+            // 계산된 보유량을 상세 창으로 전달
+            renderSingleUnitDetails(context, mouseX, mouseY, ownedCounts);
+        } else {
             renderMultiUnitGrid(context, mouseX, mouseY);
         }
     }
@@ -362,7 +368,7 @@ public class RtsScreen extends Screen {
         context.fill(x, y, x + size, y + size, 0x33FFFFFF);
     }
 
-    private void renderSingleUnitDetails(DrawContext context, float mouseX, float mouseY) {
+    private void renderSingleUnitDetails(DrawContext context, float mouseX, float mouseY, Map<String, Integer> ownedCounts) {
         if (unitList.isEmpty()) return;
         if (selectedUnit == null) return;
         MultiUnitPayload.UnitEntry mainUnit = unitList.get(0);
@@ -420,6 +426,91 @@ public class RtsScreen extends Screen {
         context.drawTextWithShadow(this.textRenderer, "§bSPD: " + String.format("%.1f", selectedUnit.attackSpeed()), statX, hudY + 27, 0xFFFFFFFF);
 
         logUpgradeRequirements(mainUnit);
+
+        // 추가된 부분: 승급 스택 렌더링
+        renderUpgradeStack(context, mainUnit, hudX, hudY, mouseX, mouseY, ownedCounts);
+
+
+    }
+
+    private void renderUpgradeStack(DrawContext context, MultiUnitPayload.UnitEntry mainUnit, int hudX, int hudY, float mouseX, float mouseY, Map<String, Integer> ownedCounts) {
+        String currentUnitId = mainUnit.jobKey();
+
+        // 레시피 필터링
+        List<UpgradeRecipe> possibleRecipes = UpgradeRecipeLoader.RECIPES.values().stream()
+                .filter(r -> r.ingredients().containsKey(currentUnitId))
+                .toList();
+
+        if (possibleRecipes.isEmpty()) return;
+
+        int startY = hudY - CARD_H - 6;
+
+        for (int i = 0; i < possibleRecipes.size(); i++) {
+            UpgradeRecipe recipe = possibleRecipes.get(i);
+            int cardX = hudX + (i * (CARD_W + CARD_SPACING));
+            int cardY = startY;
+
+            // [시각적 피드백] 조합 가능 여부 미리 체크
+            boolean canUpgrade = true;
+            for (Map.Entry<String, Integer> entry : recipe.ingredients().entrySet()) {
+                if (ownedCounts.getOrDefault(entry.getKey(), 0) < entry.getValue()) {
+                    canUpgrade = false;
+                    break;
+                }
+            }
+
+            boolean isHovered = mouseX >= cardX && mouseX <= cardX + CARD_W &&
+                    mouseY >= cardY && mouseY <= cardY + CARD_H;
+
+            // 카드 배경: 조합 가능하면 금색 테두리, 아니면 일반 테두리
+            int bgColor = isHovered ? 0xDD333333 : 0xAA000000;
+            context.fill(cardX, cardY, cardX + CARD_W, cardY + CARD_H, bgColor);
+
+            // 상단 테두리 색상 강조
+            int borderColor = canUpgrade ? 0xFFFFD700 : 0xFF555555; // 가능하면 금색(Gold)
+            context.fill(cardX, cardY, cardX + CARD_W, cardY + 1, borderColor);
+
+            // 결과물 이름 및 단축키
+            String displayName = formatId(recipe.resultId());
+            context.drawText(this.textRenderer, (canUpgrade ? "§e" : "§6") + displayName, cardX + 5, cardY + 5, 0xFFFFFFFF, false);
+            context.drawText(this.textRenderer, "§b[U" + (i + 1) + "]", cardX + 5, cardY + 16, 0xFFFFFFFF, false);
+
+            if (isHovered) {
+                renderUpgradeTooltip(context, recipe, currentUnitId, mouseX, mouseY, ownedCounts);
+            }
+        }
+    }
+
+    // 아이디를 보기 좋게 포맷팅 (예: MAGIC_WARRIOR -> Magic Warrior)
+    private String formatId(String id) {
+        if (id == null || id.isEmpty()) return "Unknown";
+        String cleanId = id.contains(":") ? id.split(":")[id.split(":").length - 1] : id;
+        String[] words = cleanId.split("_");
+        StringBuilder sb = new StringBuilder();
+        for (String w : words) {
+            if (!w.isEmpty()) {
+                sb.append(w.substring(0, 1).toUpperCase()).append(w.substring(1).toLowerCase()).append(" ");
+            }
+        }
+        return sb.toString().trim();
+    }
+
+    private void renderUpgradeTooltip(DrawContext context, UpgradeRecipe recipe, String currentId, float mouseX, float mouseY, Map<String, Integer> ownedCounts) {
+        List<Text> lines = new ArrayList<>();
+        lines.add(Text.literal("§e§l[승급 재료 현황]"));
+
+        recipe.ingredients().forEach((reqId, reqCount) -> {
+            int owned = ownedCounts.getOrDefault(reqId, 0);
+            boolean isComplete = owned >= reqCount;
+            boolean isMain = reqId.equals(currentId);
+
+            String statusColor = isComplete ? "§a" : "§c";
+            String prefix = isComplete ? "§a✔ " : "§7- ";
+
+            lines.add(Text.literal(prefix + "§f" + formatId(reqId) + " : " + statusColor + owned + "§7/" + reqCount + (isMain ? " §7(본인)" : "")));
+        });
+
+        context.drawTooltip(this.textRenderer, lines, (int)mouseX, (int)mouseY);
     }
 
     private void logUpgradeRequirements(MultiUnitPayload.UnitEntry mainUnit) {
