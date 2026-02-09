@@ -3,6 +3,8 @@ package com.liante.spawner;
 import com.liante.config.DefenseState;
 import com.liante.Mingtd;
 import com.liante.MingtdUnit;
+import com.liante.network.UnitInventoryPayload;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.entity.SpawnReason;
 import net.minecraft.item.Item;
 import net.minecraft.item.Items;
@@ -63,7 +65,10 @@ public class UnitSpawner {
 
         public static DefenseUnit fromId(String id) {
             for (DefenseUnit unit : values()) {
-                if (unit.id.equals(id)) {
+//                if (unit.id.equals(id)) {
+//                    return unit;
+//                }
+                if (unit.id.equalsIgnoreCase(id) || unit.name().equalsIgnoreCase(id)) {
                     return unit;
                 }
             }
@@ -167,9 +172,13 @@ public class UnitSpawner {
             // 2. 이름 설정
             unitEntity.setCustomName(Text.literal(selectedUnit.getDisplayName()));
             unitEntity.setCustomNameVisible(true);
+            unitEntity.setOwnerUuid(player.getUuid()); // 주인 각인
 
             // 3. 월드에 소환
             world.spawnEntity(unitEntity);
+
+
+            UnitInventoryPayload.sendSync(player);
 
             player.sendMessage(Text.literal(selectedUnit.getDisplayName() + "§a 유닛이 소환되었습니다!"), true);
         }

@@ -1,17 +1,13 @@
 package com.liante.client;
 
 import com.liante.Mingtd;
-import com.liante.manager.CameraMovePayload;
 import com.liante.network.MultiUnitPayload;
+import com.liante.network.UnitInventoryPayload;
 import com.liante.network.UnitStatPayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.render.entity.VindicatorEntityRenderer;
 
 import static com.mojang.text2speech.Narrator.LOGGER;
 
@@ -37,6 +33,15 @@ public class MingtdClient implements ClientModInitializer {
                 } else {
 //                    LOGGER.info("[MingTD] 현재 RtsScreen이 열려있지 않아 데이터를 표시할 수 없습니다."); // 로그 추가
                 }
+            });
+        });
+
+        ClientPlayNetworking.registerGlobalReceiver(UnitInventoryPayload.ID, (payload, context) -> {
+            context.client().execute(() -> {
+                System.out.println("[MingTD-Client] 패킷 수신됨! 데이터 크기: " + payload.inventory().size());
+
+
+                ClientUnitManager.updateInventory(payload);
             });
         });
 

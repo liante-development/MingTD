@@ -3,13 +3,9 @@ package com.liante;
 import com.liante.config.DefenseConfig;
 import com.liante.config.DefenseState;
 import com.liante.manager.CameraMovePayload;
-import com.liante.manager.UpgradeManager;
 import com.liante.manager.WaveManager;
 import com.liante.map.MapGenerator;
-import com.liante.network.MoveUnitPayload;
-import com.liante.network.MultiUnitPayload;
-import com.liante.network.SelectUnitPayload;
-import com.liante.network.UnitStatPayload;
+import com.liante.network.*;
 import com.liante.recipe.UpgradeRecipeLoader;
 import com.liante.spawner.UnitSpawner;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
@@ -21,12 +17,8 @@ import net.fabricmc.fabric.api.networking.v1.PayloadTypeRegistry;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.fabric.api.object.builder.v1.entity.FabricDefaultAttributeRegistry;
-import net.fabricmc.fabric.api.resource.IdentifiableResourceReloadListener;
-import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
 import net.fabricmc.fabric.api.resource.v1.ResourceLoader;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.EntityType;
-import net.minecraft.entity.SpawnGroup;
+import net.minecraft.entity.*;
 import net.minecraft.entity.mob.ZombieEntity;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
@@ -34,7 +26,6 @@ import net.minecraft.network.packet.CustomPayload;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.Registry;
 import net.minecraft.registry.RegistryKey;
-import net.minecraft.resource.ResourceManager;
 import net.minecraft.resource.ResourceType;
 import net.minecraft.scoreboard.*;
 import net.minecraft.server.MinecraftServer;
@@ -50,13 +41,7 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameMode;
 import net.minecraft.world.rule.GameRules;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
-
-import static com.mojang.text2speech.Narrator.LOGGER;
+import java.util.*;
 
 public class Mingtd implements ModInitializer {
     // 맵의 기준 좌표 (0, 100, 0 등 고정된 위치 권장)
@@ -88,6 +73,7 @@ public class Mingtd implements ModInitializer {
         PayloadTypeRegistry.playC2S().register(CameraMovePayload.ID, CameraMovePayload.CODEC);
         PayloadTypeRegistry.playS2C().register(UnitStatPayload.ID, UnitStatPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(MultiUnitPayload.ID, MultiUnitPayload.CODEC);
+        PayloadTypeRegistry.playS2C().register(UnitInventoryPayload.ID, UnitInventoryPayload.CODEC);
 
         ResourceLoader.get(ResourceType.SERVER_DATA).registerReloader(
                 Identifier.of("mingtd", "upgrades"),
@@ -181,6 +167,7 @@ public class Mingtd implements ModInitializer {
 
                 // 패킷 전송은 여기서 한 번만!
                 ServerPlayNetworking.send(player, new OpenRtsScreenPayload());
+                UnitInventoryPayload.sendSync(player);
 
                 // [추가] 환영 메시지 및 현재 자원 안내
                 player.sendMessage(Text.literal("§e MingTD에 오신 것을 환영합니다!"), false);

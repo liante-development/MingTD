@@ -1,6 +1,7 @@
 package com.liante;
 
 import com.liante.config.DefenseState;
+import com.liante.network.UnitInventoryPayload;
 import com.liante.network.UnitStatPayload;
 import com.liante.renderer.MingtdArrow;
 import com.liante.renderer.MingtdMagicMissile;
@@ -25,17 +26,23 @@ import net.minecraft.entity.mob.PathAwareEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.projectile.ProjectileEntity;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NbtCompound;
 import net.minecraft.particle.ParticleTypes;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.sound.SoundEvents;
+import net.minecraft.storage.ReadView;
+import net.minecraft.storage.WriteView;
 import net.minecraft.util.ActionResult;
 import net.minecraft.util.Hand;
+import net.minecraft.util.Uuids;
+import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 
 import java.util.List;
+import java.util.UUID;
 
 public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
     private static final TrackedData<Integer> UNIT_TYPE = DataTracker.registerData(MingtdUnit.class, TrackedDataHandlerRegistry.INTEGER);
@@ -43,6 +50,16 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
     private boolean isManualMoving = false;
     // 1. 유닛 정보를 저장할 필드 추가
     private UnitSpawner.DefenseUnit unitType;
+
+    private UUID ownerUuid; // 유닛의 주인 UUID
+
+    public void setOwnerUuid(UUID ownerUuid) {
+        this.ownerUuid = ownerUuid;
+    }
+
+    public UUID getOwnerUuid() {
+        return this.ownerUuid;
+    }
 
     public MingtdUnit(EntityType<? extends PathAwareEntity> type, World world) {
         super(type, world);
@@ -334,4 +351,54 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
                 unitType.name()
         ));
     }
+
+    // [데이터 저장] WriteView 사용
+    @Override
+    protected void readCustomData(ReadView view) {
+        // 1. 소유주 UUID 로드 (기존 유지)
+        view.read("owner_uuid", Uuids.INT_STREAM_CODEC).ifPresent(uuid -> {
+            this.ownerUuid = uuid;
+        });
+
+        // 2. 유닛 종류(ID) 로드 및 강제 동기화
+        String typeId = view.getString("unit_type_id", null);
+        if (typeId != null) {
+            // ID로부터 Enum 객체 획득
+            UnitSpawner.DefenseUnit loadedType = UnitSpawner.DefenseUnit.fromId(typeId);
+            this.unitType = loadedType;
+
+            // [핵심 추가] DataTracker에도 해당 타입의 인덱스를 저장하여 유닛 정체성 고정
+            // 이 작업이 빠지면 서버는 '이 유닛이 궁수인가?'라고 판단할 수 있습니다.
+            this.dataTracker.set(UNIT_TYPE, loadedType.ordinal());
+        }
+    }
+
+    // 3. writeCustomData도 짝을 맞춰줍니다.
+    @Override
+    protected void writeCustomData(WriteView view) {
+        if (this.ownerUuid != null) {
+            view.put("owner_uuid", Uuids.INT_STREAM_CODEC, this.ownerUuid);
+        }
+        if (this.unitType != null) {
+            view.putString("unit_type_id", this.unitType.getId());
+        } else {
+            // 만약 필드가 비어있다면 DataTracker에서 역으로 가져와서라도 저장
+            int typeIndex = this.dataTracker.get(UNIT_TYPE);
+            view.putString("unit_type_id", UnitSpawner.DefenseUnit.values()[typeIndex].getId());
+        }
+    }
+
+    @Override
+    public void onRemoved() {
+        super.onRemoved();
+        // 서버 월드이고 주인이 있다면 동기화 실행
+        if (!this.getEntityWorld().isClient() && this.getOwnerUuid() != null) {
+            ServerPlayerEntity player = (ServerPlayerEntity) ((ServerWorld)this.getEntityWorld()).getPlayerByUuid(this.getOwnerUuid());
+            if (player != null) {
+                UnitInventoryPayload.sendSync(player);
+            }
+        }
+    }
+
+
 }

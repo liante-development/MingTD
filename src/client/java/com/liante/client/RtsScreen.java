@@ -6,7 +6,7 @@ import com.liante.network.MultiUnitPayload;
 import com.liante.network.UnitStatPayload;
 import com.liante.recipe.UpgradeRecipe;
 import com.liante.recipe.UpgradeRecipeLoader;
-import com.mojang.blaze3d.systems.RenderSystem;
+import com.liante.spawner.UnitSpawner;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.Click;
@@ -15,22 +15,18 @@ import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.ingame.InventoryScreen;
-import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.input.KeyInput;
-import net.minecraft.client.render.Camera;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.projectile.ProjectileUtil;
+import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
-import net.minecraft.util.hit.EntityHitResult;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Box;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
-import net.minecraft.world.RaycastContext;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
-import org.joml.Vector3f;
 import org.joml.Vector4f;
 import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
@@ -148,10 +144,10 @@ public class RtsScreen extends Screen {
             net.minecraft.client.util.Window window = client.getWindow();
 
             // 방향키 (X, Z축)
-            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_W)) dz += moveSpeed;
-            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_S)) dz -= moveSpeed;
-            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_A)) dx += moveSpeed;
-            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_D)) dx -= moveSpeed;
+            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_UP)) dz += moveSpeed;
+            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_DOWN)) dz -= moveSpeed;
+            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_LEFT)) dx += moveSpeed;
+            if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_RIGHT)) dx -= moveSpeed;
 
             // 높낮이 (Y축) - Left Alt: 상승 / Left Control: 하강
             if (InputUtil.isKeyPressed(window, GLFW.GLFW_KEY_LEFT_ALT)) dy += verticalSpeed;
@@ -282,10 +278,21 @@ public class RtsScreen extends Screen {
         if (unitList.isEmpty()) return;
 
         // [최적화] 모든 렌더링에 필요한 보유량 데이터를 여기서 딱 한 번만 계산합니다.
-        Map<String, Integer> ownedCounts = new HashMap<>();
-        for (MultiUnitPayload.UnitEntry entry : this.unitList) {
-            ownedCounts.put(entry.jobKey(), ownedCounts.getOrDefault(entry.jobKey(), 0) + 1);
-        }
+//        Map<String, Integer> ownedCounts = new HashMap<>();
+//        for (MultiUnitPayload.UnitEntry entry : this.unitList) {
+//            ownedCounts.put(entry.jobKey(), ownedCounts.getOrDefault(entry.jobKey(), 0) + 1);
+//        }
+        Map<String, Integer> ownedCounts = ClientUnitManager.getOwnedCounts();
+
+//        if (ownedCounts.isEmpty()) {
+//            // 유닛이 있는데도 0개라면 동기화 패킷이 안 온 것임
+//            LOGGER.info("[MingTD] 현재 보유량 데이터가 비어있습니다.");
+//        } else {
+//            LOGGER.info("[MingTD] 현재 보유 유닛 종류 수: " + ownedCounts.size());
+//            ownedCounts.forEach((id, count) -> {
+//                LOGGER.info(" -> 유닛 ID: " + id + ", 보유 개수: " + count);
+//            });
+//        }
 
         if (unitList.size() == 1 && selectedUnit != null) {
             // 계산된 보유량을 상세 창으로 전달
@@ -425,7 +432,7 @@ public class RtsScreen extends Screen {
         context.drawTextWithShadow(this.textRenderer, "§eATK: " + (int)selectedUnit.currentDamage(), statX, hudY + 15, 0xFFFFFFFF);
         context.drawTextWithShadow(this.textRenderer, "§bSPD: " + String.format("%.1f", selectedUnit.attackSpeed()), statX, hudY + 27, 0xFFFFFFFF);
 
-        logUpgradeRequirements(mainUnit);
+//        logUpgradeRequirements(mainUnit);
 
         // 추가된 부분: 승급 스택 렌더링
         renderUpgradeStack(context, mainUnit, hudX, hudY, mouseX, mouseY, ownedCounts);
@@ -450,7 +457,7 @@ public class RtsScreen extends Screen {
             int cardX = hudX + (i * (CARD_W + CARD_SPACING));
             int cardY = startY;
 
-            // [시각적 피드백] 조합 가능 여부 미리 체크
+            // [시각적 피드백] 조합 가능 여부 체크
             boolean canUpgrade = true;
             for (Map.Entry<String, Integer> entry : recipe.ingredients().entrySet()) {
                 if (ownedCounts.getOrDefault(entry.getKey(), 0) < entry.getValue()) {
@@ -462,17 +469,23 @@ public class RtsScreen extends Screen {
             boolean isHovered = mouseX >= cardX && mouseX <= cardX + CARD_W &&
                     mouseY >= cardY && mouseY <= cardY + CARD_H;
 
-            // 카드 배경: 조합 가능하면 금색 테두리, 아니면 일반 테두리
+            // 카드 배경
             int bgColor = isHovered ? 0xDD333333 : 0xAA000000;
             context.fill(cardX, cardY, cardX + CARD_W, cardY + CARD_H, bgColor);
 
-            // 상단 테두리 색상 강조
-            int borderColor = canUpgrade ? 0xFFFFD700 : 0xFF555555; // 가능하면 금색(Gold)
+            // 상단 테두리 색상 강조 (조합 가능 시 금색)
+            int borderColor = canUpgrade ? 0xFFFFD700 : 0xFF555555;
             context.fill(cardX, cardY, cardX + CARD_W, cardY + 1, borderColor);
 
-            // 결과물 이름 및 단축키
-            String displayName = formatId(recipe.resultId());
-            context.drawText(this.textRenderer, (canUpgrade ? "§e" : "§6") + displayName, cardX + 5, cardY + 5, 0xFFFFFFFF, false);
+            // [수정] 결과물 ID(resultId)를 통해 실제 표시할 이름을 가져옵니다.
+            // DefenseUnit.fromId()를 사용하여 Enum에 정의된 displayName을 획득
+//            System.out.println("---- recipe.resultId() ::  ----" + recipe.resultId());
+//            UnitSpawner.DefenseUnit resultUnit = UnitSpawner.DefenseUnit.fromId(recipe.resultId());
+            UnitSpawner.DefenseUnit resultUnit = UnitSpawner.DefenseUnit.valueOf(recipe.resultId());
+            String displayName = resultUnit.getDisplayName();
+
+            // 결과물 이름 출력 (조합 가능 시 밝은 노란색 강조)
+            context.drawText(this.textRenderer, (canUpgrade ? "§e§l" : "§6") + displayName, cardX + 5, cardY + 5, 0xFFFFFFFF, false);
             context.drawText(this.textRenderer, "§b[U" + (i + 1) + "]", cardX + 5, cardY + 16, 0xFFFFFFFF, false);
 
             if (isHovered) {
@@ -500,14 +513,25 @@ public class RtsScreen extends Screen {
         lines.add(Text.literal("§e§l[승급 재료 현황]"));
 
         recipe.ingredients().forEach((reqId, reqCount) -> {
-            int owned = ownedCounts.getOrDefault(reqId, 0);
+            // [참고하신 로직 적용]
+            // 1. reqId(예: "WARRIOR")에 해당하는 실제 유닛 정보(DefenseUnit)를 가져옵니다.
+            UnitSpawner.DefenseUnit unitType = UnitSpawner.DefenseUnit.valueOf(reqId);
+
+            // 2. 보유량 조회 (패킷으로 받은 ID 기반)
+            int owned = ownedCounts.getOrDefault(unitType.getId(), 0);
+
             boolean isComplete = owned >= reqCount;
-            boolean isMain = reqId.equals(currentId);
+            boolean isMain = unitType.getId().equals(currentId);
 
             String statusColor = isComplete ? "§a" : "§c";
             String prefix = isComplete ? "§a✔ " : "§7- ";
 
-            lines.add(Text.literal(prefix + "§f" + formatId(reqId) + " : " + statusColor + owned + "§7/" + reqCount + (isMain ? " §7(본인)" : "")));
+            // 3. [핵심] HUD에서 사용한 것과 동일하게 unitType.getDisplayName()(또는 .name())을 사용
+            // 만약 DefenseUnit Enum에 displayName이 있다면 그것을,
+            // HUD에서 사용한 name()이 Enum 고유 이름이라면 그것을 사용합니다.
+            String displayName = unitType.getDisplayName();
+
+            lines.add(Text.literal(prefix + displayName + " : " + statusColor + owned + "§7/" + reqCount + (isMain ? " §6(본인)" : "")));
         });
 
         context.drawTooltip(this.textRenderer, lines, (int)mouseX, (int)mouseY);
