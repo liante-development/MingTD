@@ -17,6 +17,11 @@ public record UnitStatPayload(
 ) implements CustomPayload {
     public static final Id<UnitStatPayload> ID = new Id<>(Identifier.of("mingtd", "unit_stat"));
 
+    // [추가] 컴팩트 생성자: 데이터를 소문자로 강제 변환하여 시스템 일관성 유지
+    public UnitStatPayload {
+        jobKey = jobKey.toLowerCase(java.util.Locale.ROOT);
+    }
+
     public static final PacketCodec<RegistryByteBuf, UnitStatPayload> CODEC = PacketCodec.tuple(
             PacketCodecs.VAR_INT, UnitStatPayload::entityId,
             PacketCodecs.STRING, UnitStatPayload::name,

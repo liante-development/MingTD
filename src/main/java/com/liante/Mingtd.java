@@ -3,6 +3,7 @@ package com.liante;
 import com.liante.config.DefenseConfig;
 import com.liante.config.DefenseState;
 import com.liante.manager.CameraMovePayload;
+import com.liante.manager.UpgradeManager;
 import com.liante.manager.WaveManager;
 import com.liante.map.MapGenerator;
 import com.liante.network.*;
@@ -43,6 +44,8 @@ import net.minecraft.world.rule.GameRules;
 
 import java.util.*;
 
+import static com.mojang.text2speech.Narrator.LOGGER;
+
 public class Mingtd implements ModInitializer {
     // 맵의 기준 좌표 (0, 100, 0 등 고정된 위치 권장)
     public static final BlockPos SPAWN_POS = new BlockPos(0, 100, 0);
@@ -74,6 +77,7 @@ public class Mingtd implements ModInitializer {
         PayloadTypeRegistry.playS2C().register(UnitStatPayload.ID, UnitStatPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(MultiUnitPayload.ID, MultiUnitPayload.CODEC);
         PayloadTypeRegistry.playS2C().register(UnitInventoryPayload.ID, UnitInventoryPayload.CODEC);
+        PayloadTypeRegistry.playC2S().register(UpgradeRequestPayload.ID, UpgradeRequestPayload.CODEC);
 
         ResourceLoader.get(ResourceType.SERVER_DATA).registerReloader(
                 Identifier.of("mingtd", "upgrades"),
@@ -178,7 +182,7 @@ public class Mingtd implements ModInitializer {
 
         // [초기화 명령어] /mingtd 명령어 세트 등록
         CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
-            dispatcher.register(CommandManager.literal("mingtd")
+            dispatcher.register(CommandManager.literal("mt")
                     .then(CommandManager.literal("reset")
                             .executes(context -> {
                                 ServerWorld world = context.getSource().getWorld();
@@ -227,13 +231,14 @@ public class Mingtd implements ModInitializer {
                                 return 1;
                             }))
                     // [신규 추가] 랜덤 유닛 소환 명령어
-                    .then(CommandManager.literal("summon")
+                    .then(CommandManager.literal("s")
                             .executes(context -> {
                                 ServerPlayerEntity player = context.getSource().getPlayer();
                                 ServerWorld world = context.getSource().getWorld();
 
                                 if (player != null) {
                                     // 위습 1개를 소모하여 유닛 소환 (UnitSpawner 연동)
+                                    UnitSpawner.spawnRandomUnit(player, world);
                                     UnitSpawner.spawnRandomUnit(player, world);
                                 }
                                 return 1;
@@ -424,6 +429,23 @@ public class Mingtd implements ModInitializer {
                         DefenseConfig.CAMERA_PITCH,
                         false // 스냅샷 여부
                 );
+            });
+        });
+
+        ServerPlayNetworking.registerGlobalReceiver(UpgradeRequestPayload.ID, (payload, context) -> {
+            ServerPlayerEntity player = context.player();
+            LOGGER.info("[MingtdDebug] ServerPlayNetworking UpgradeRequestPayload ");
+            // [수정] 클라이언트가 보낸 3가지 핵심 정보를 추출
+            String recipeId = payload.recipeId();
+            int mainUnitId = payload.mainUnitEntityId();
+            List<Integer> ingredientIds = payload.ingredientIds(); // 새로 추가된 재료 목록
+
+            context.server().execute(() -> {
+                // [수정] UpgradeManager에 재료 목록까지 함께 넘겨줍니다.
+                UpgradeManager.tryUpgrade(player, recipeId, mainUnitId, ingredientIds);
+
+                // 결과와 상관없이 항상 최신 상태를 동기화하여 HUD를 갱신합니다.
+                UnitInventoryPayload.sendSync(player);
             });
         });
 

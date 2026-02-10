@@ -40,12 +40,16 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.UUID;
 
 public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
     private static final TrackedData<Integer> UNIT_TYPE = DataTracker.registerData(MingtdUnit.class, TrackedDataHandlerRegistry.INTEGER);
+    private static final Logger LOGGER = LoggerFactory.getLogger("MingTD-RTS");
+
     // MingtdUnit.java 내부
     private boolean isManualMoving = false;
     // 1. 유닛 정보를 저장할 필드 추가
@@ -79,8 +83,10 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
     public String getUnitId() {
         UnitSpawner.DefenseUnit type = this.getUnitType();
         if (type != null) {
-            return type.getId(); // Enum에 정의한 "normal_warrior" 등을 반환
+            return type.getId(); // "warrior", "archer" 등 소문자 반환
         }
+        // [팁] unknown보다는 기본값(WARRIOR 등)을 주거나
+        // 로그를 남겨 어떤 유닛이 정체성을 잃었는지 확인하는 것이 디버깅에 좋습니다.
         return "unknown";
     }
 
@@ -162,6 +168,11 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
     }
 
     public void setUnitType(UnitSpawner.DefenseUnit type) {
+        if (type == null) return;
+
+        // [핵심] 메모리 필드에 값을 할당해야 writeCustomData에서 getId()를 호출할 수 있음
+        this.unitType = type;
+
         this.dataTracker.set(UNIT_TYPE, type.ordinal());
         this.equipStack(EquipmentSlot.MAINHAND, new ItemStack(type.getMainItem()));
 
@@ -360,16 +371,26 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
             this.ownerUuid = uuid;
         });
 
-        // 2. 유닛 종류(ID) 로드 및 강제 동기화
+        // 2. 유닛 타입 로드 및 복구
         String typeId = view.getString("unit_type_id", null);
         if (typeId != null) {
-            // ID로부터 Enum 객체 획득
-            UnitSpawner.DefenseUnit loadedType = UnitSpawner.DefenseUnit.fromId(typeId);
-            this.unitType = loadedType;
+            try {
+                UnitSpawner.DefenseUnit loadedType = UnitSpawner.DefenseUnit.fromId(typeId);
 
-            // [핵심 추가] DataTracker에도 해당 타입의 인덱스를 저장하여 유닛 정체성 고정
-            // 이 작업이 빠지면 서버는 '이 유닛이 궁수인가?'라고 판단할 수 있습니다.
-            this.dataTracker.set(UNIT_TYPE, loadedType.ordinal());
+                // [수정] 단순 할당 대신 setUnitType을 호출하여
+                // 필드, 트래커, 장비(아이템), AI를 모두 한 번에 복구합니다.
+                if (loadedType != null) {
+                    this.setUnitType(loadedType);
+                    LOGGER.info("[MingtdDebug] readCustomData: Loaded and set type to {}", typeId);
+                }
+            } catch (IllegalArgumentException e) {
+                // 잘못된 ID일 경우 기본값으로 안전하게 복구
+                LOGGER.error("[MingtdDebug] Unknown unit_type_id: {}. Falling back to WARRIOR.", typeId);
+                this.setUnitType(UnitSpawner.DefenseUnit.WARRIOR);
+            }
+        } else {
+            // 데이터가 아예 없는 경우 (최초 생성 등)에도 안전하게 기본값 설정
+            this.setUnitType(UnitSpawner.DefenseUnit.WARRIOR);
         }
     }
 
@@ -381,10 +402,12 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
         }
         if (this.unitType != null) {
             view.putString("unit_type_id", this.unitType.getId());
+            LOGGER.info("[MingtdDebug] writeCustomData this.unitType.getId() :: " + this.unitType.getId());
         } else {
             // 만약 필드가 비어있다면 DataTracker에서 역으로 가져와서라도 저장
             int typeIndex = this.dataTracker.get(UNIT_TYPE);
             view.putString("unit_type_id", UnitSpawner.DefenseUnit.values()[typeIndex].getId());
+            LOGGER.info("[MingtdDebug] writeCustomData this.unitType == null this.unitType.getId() :: " + UnitSpawner.DefenseUnit.values()[typeIndex].getId());
         }
     }
 
@@ -399,6 +422,4 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
             }
         }
     }
-
-
 }

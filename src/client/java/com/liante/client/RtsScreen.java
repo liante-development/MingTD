@@ -4,6 +4,7 @@ import com.liante.MingtdUnit;
 import com.liante.manager.CameraMovePayload;
 import com.liante.network.MultiUnitPayload;
 import com.liante.network.UnitStatPayload;
+import com.liante.network.UpgradeRequestPayload;
 import com.liante.recipe.UpgradeRecipe;
 import com.liante.recipe.UpgradeRecipeLoader;
 import com.liante.spawner.UnitSpawner;
@@ -14,16 +15,13 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.screen.ingame.InventoryScreen;
 import net.minecraft.client.input.KeyInput;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.text.MutableText;
 import net.minecraft.text.Text;
 import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.Box;
-import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
@@ -33,8 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
-
-import static com.mojang.text2speech.Narrator.LOGGER;
+import java.util.stream.Collectors;
 
 public class RtsScreen extends Screen {
     // 1. 로그 기록을 위한 Logger 선언
@@ -55,6 +52,15 @@ public class RtsScreen extends Screen {
     private static final int CARD_H = 28;
     private static final int CARD_SPACING = 4;
 
+    private final int width = client.getWindow().getScaledWidth();
+    private final int height = client.getWindow().getScaledHeight();
+
+    // 1. HUD 베이스 설정 (하단 중앙)
+    private static final int hudW = 220; // 전체 너비
+    private static final int hudH = 54;  // 전체 높이
+    private final int hudX = (width / 2) - (hudW / 2); // 중앙 정렬
+    private final int hudY = height - hudH - 5;
+
     public RtsScreen() {
         super(Text.literal("RTS Screen"));
         this.selectionManager = new SelectionManager(MinecraftClient.getInstance());
@@ -62,22 +68,9 @@ public class RtsScreen extends Screen {
 
     @Override
     public boolean mouseClicked(Click click, boolean doubled) {
-//        LOGGER.info("[MingtdDebug] mouseClicked (Screen): x={}, y={}, button={}",
-//                click.x(), click.y(), click.button());
-
+        LOGGER.info("[MingtdDebug] mouseClicked (Screen): x={}, y={}, button={}",
+                click.x(), click.y(), click.button());
         Vec3d mouseWorldPos = getMouseWorldPos(click.x(), click.y());
-
-        if (mouseWorldPos != null) {
-            // [분석 주석]
-            // 현재 수집된 유닛 좌표(Y=100)와 마우스가 찍은 지점(mouseWorldPos)을 비교.
-            // 레이가 Y=146에서 Y=100까지 수직에 가깝게 꽂히므로,
-            // 엔티티의 히트박스(높이 1.95)를 고려한 '원통형' 혹은 '엔티티 전용 레이캐스트'가 없으면
-            // 픽셀 단위로 정확히 유닛의 발을 찍지 않는 한 선택이 실패합니다.
-
-//            LOGGER.info("[MingtdDebug] 최종 지면 판정 좌표: X={}, Y={}, Z={}",
-//                    mouseWorldPos.x, mouseWorldPos.y, mouseWorldPos.z);
-        }
-
         // 1. HUD 영역 클릭 체크 (클릭이 HUD 패널 위라면 조작 무시)
         int centerX = this.width / 2;
         int bottomY = this.height - 60;
@@ -87,10 +80,47 @@ public class RtsScreen extends Screen {
 //        if (isClickOnHud) {
 //            return true; // HUD 클릭 시 월드 상호작용 차단
 //        }
+        // 왼쪽 클릭(0)인 경우에만 처리
+        if (click.button() == 0 && this.selectedUnit != null) {
+            List<UpgradeRecipe> recipes = getAvailableRecipes(this.selectedUnit.jobKey());
+            // renderUpgradeStack에서 사용한 좌표 계산 로직과 동일해야 함
+            LOGGER.info("[MingtdDebug] RtsScreen mouseClicked ");
 
-        // 2. 허공(땅) 클릭 시 HUD 타겟 해제 (스타크래프트 방식)
-        // selectionManager가 유닛을 잡지 못했을 때를 대비해 여기서 처리하거나
-        // selectionManager 내부에서 선택된 유닛이 없을 때 selectedUnit을 null로 만듭니다.
+            for (int i = 0; i < recipes.size(); i++) {
+                int cardX = getUpgradeCardX(i);
+                int cardY = getUpgradeCardY();
+                LOGGER.info("[MingtdDebug] Mouse: {}, {} | Card{}: {}, {} ~ {}, {}",
+                        click.x(), click.y(), i, cardX, cardY, cardX + CARD_W, cardY + CARD_H);
+                // 클릭 위치가 해당 카드 영역 안인지 체크
+                if (click.x() >= cardX && click.x() <= cardX + CARD_W &&
+                        click.y() >= cardY && click.y() <= cardY + CARD_H) {
+
+                    UpgradeRecipe recipe = recipes.get(i);
+                    Map<String, Integer> ownedCounts = ClientUnitManager.getOwnedCounts();
+
+                    // 1. 조합 가능 여부 1차 체크 (숫자 기반)
+                    LOGGER.info("[MingtdDebug] RtsScreen mouseClicked recipe.canUpgrade :: " + recipe.canUpgrade(ownedCounts));
+                    if (recipe.canUpgrade(ownedCounts)) {
+                        int mainId = this.selectedUnit.entityId();
+
+                        // 2. [핵심] 서버에 "얘네 지워줘"라고 말할 재료 ID 리스트 추출
+                        List<Integer> ingredientsToBurn = recipe.collectIngredientIds(
+                                ClientUnitManager.getOwnedList(),
+                                mainId
+                        );
+
+                        // 3. 확장된 패킷 구조로 전송
+                        ClientPlayNetworking.send(new UpgradeRequestPayload(
+                                recipe.baseId(),
+                                mainId,
+                                ingredientsToBurn // 서버는 이 목록을 그대로 discard() 함
+                        ));
+                    }
+                    return true;
+                }
+            }
+        }
+
         if (click.button() == 0) {
             this.selectedUnit = null;
             this.unitList.clear(); // 다중 선택 리스트도 초기화
@@ -283,6 +313,7 @@ public class RtsScreen extends Screen {
 //            ownedCounts.put(entry.jobKey(), ownedCounts.getOrDefault(entry.jobKey(), 0) + 1);
 //        }
         Map<String, Integer> ownedCounts = ClientUnitManager.getOwnedCounts();
+        List<MingtdUnit> targets = ClientUnitManager.getOwnedList();
 
 //        if (ownedCounts.isEmpty()) {
 //            // 유닛이 있는데도 0개라면 동기화 패킷이 안 온 것임
@@ -380,15 +411,6 @@ public class RtsScreen extends Screen {
         if (selectedUnit == null) return;
         MultiUnitPayload.UnitEntry mainUnit = unitList.get(0);
 
-        int width = this.client.getWindow().getScaledWidth();
-        int height = this.client.getWindow().getScaledHeight();
-
-        // 1. HUD 베이스 설정 (하단 중앙)
-        int hudW = 220; // 전체 너비
-        int hudH = 54;  // 전체 높이
-        int hudX = (width / 2) - (hudW / 2); // 중앙 정렬
-        int hudY = height - hudH - 5;        // 하단에서 5픽셀 띄움
-
         // 2. 배경 사각형 (스타크래프트 특유의 어두운 패널 느낌)
         context.fill(hudX, hudY, hudX + hudW, hudY + hudH, 0xCC000000); // 메인 패널
         context.fill(hudX, hudY, hudX + hudW, hudY + 1, 0xFF555555);    // 상단 테두리 선
@@ -433,33 +455,46 @@ public class RtsScreen extends Screen {
         context.drawTextWithShadow(this.textRenderer, "§bSPD: " + String.format("%.1f", selectedUnit.attackSpeed()), statX, hudY + 27, 0xFFFFFFFF);
 
 //        logUpgradeRequirements(mainUnit);
-
         // 추가된 부분: 승급 스택 렌더링
         renderUpgradeStack(context, mainUnit, hudX, hudY, mouseX, mouseY, ownedCounts);
-
-
     }
 
     private void renderUpgradeStack(DrawContext context, MultiUnitPayload.UnitEntry mainUnit, int hudX, int hudY, float mouseX, float mouseY, Map<String, Integer> ownedCounts) {
         String currentUnitId = mainUnit.jobKey();
-
         // 레시피 필터링
         List<UpgradeRecipe> possibleRecipes = UpgradeRecipeLoader.RECIPES.values().stream()
+                // 1. 현재 선택한 유닛이 재료에 포함된 레시피만 필터링
                 .filter(r -> r.ingredients().containsKey(currentUnitId))
+                .sorted(
+                        // 우선순위 1: 결과물 유닛의 랭크(rank) 높은 순 (매직 > 일반)
+                        Comparator.comparingInt((UpgradeRecipe r) ->
+                                        UnitSpawner.DefenseUnit.fromId(r.resultId()).getRank()
+                                ).reversed()
+
+                                // 우선순위 2: 선택된 재료(currentUnitId)가 많이 소모되는 순서 (3개 > 1개)
+                                .thenComparing(r -> r.ingredients().getOrDefault(currentUnitId, 0), Comparator.reverseOrder())
+
+                                // 우선순위 3: 결과물 유닛의 우선순위(priority) 높은 순
+                                .thenComparing(r ->
+                                        UnitSpawner.DefenseUnit.fromId(r.resultId()).getPriority(), Comparator.reverseOrder()
+                                )
+
+                                // 우선순위 4: 이름(baseId) 사전순 (v1, v2, v3 순서 고정용)
+                                .thenComparing(UpgradeRecipe::baseId)
+                )
                 .toList();
 
         if (possibleRecipes.isEmpty()) return;
 
-        int startY = hudY - CARD_H - 6;
-
         for (int i = 0; i < possibleRecipes.size(); i++) {
             UpgradeRecipe recipe = possibleRecipes.get(i);
-            int cardX = hudX + (i * (CARD_W + CARD_SPACING));
-            int cardY = startY;
+            int cardX = getUpgradeCardX(i);
+            int cardY = getUpgradeCardY();
 
             // [시각적 피드백] 조합 가능 여부 체크
             boolean canUpgrade = true;
             for (Map.Entry<String, Integer> entry : recipe.ingredients().entrySet()) {
+                int owned = ownedCounts.getOrDefault(entry.getKey(), 0);
                 if (ownedCounts.getOrDefault(entry.getKey(), 0) < entry.getValue()) {
                     canUpgrade = false;
                     break;
@@ -478,15 +513,17 @@ public class RtsScreen extends Screen {
             context.fill(cardX, cardY, cardX + CARD_W, cardY + 1, borderColor);
 
             // [수정] 결과물 ID(resultId)를 통해 실제 표시할 이름을 가져옵니다.
-            // DefenseUnit.fromId()를 사용하여 Enum에 정의된 displayName을 획득
-//            System.out.println("---- recipe.resultId() ::  ----" + recipe.resultId());
-//            UnitSpawner.DefenseUnit resultUnit = UnitSpawner.DefenseUnit.fromId(recipe.resultId());
-            UnitSpawner.DefenseUnit resultUnit = UnitSpawner.DefenseUnit.valueOf(recipe.resultId());
+            UnitSpawner.DefenseUnit resultUnit = UnitSpawner.DefenseUnit.fromId(recipe.resultId());
             String displayName = resultUnit.getDisplayName();
+
+            // 단축키 매핑용 배열 정의
+            String[] hotkeys = {"Q", "W", "E", "R"};
+            String hotkey = (i < hotkeys.length) ? hotkeys[i] : String.valueOf(i + 1);
 
             // 결과물 이름 출력 (조합 가능 시 밝은 노란색 강조)
             context.drawText(this.textRenderer, (canUpgrade ? "§e§l" : "§6") + displayName, cardX + 5, cardY + 5, 0xFFFFFFFF, false);
-            context.drawText(this.textRenderer, "§b[U" + (i + 1) + "]", cardX + 5, cardY + 16, 0xFFFFFFFF, false);
+            context.drawText(this.textRenderer, "§b[" + hotkey + "]", cardX + 5, cardY + 16, 0xFFFFFFFF, false);
+//            context.drawText(this.textRenderer, "§b[U" + (i + 1) + "]", cardX + 5, cardY + 16, 0xFFFFFFFF, false);
 
             if (isHovered) {
                 renderUpgradeTooltip(context, recipe, currentUnitId, mouseX, mouseY, ownedCounts);
@@ -514,8 +551,12 @@ public class RtsScreen extends Screen {
 
         recipe.ingredients().forEach((reqId, reqCount) -> {
             // [참고하신 로직 적용]
-            // 1. reqId(예: "WARRIOR")에 해당하는 실제 유닛 정보(DefenseUnit)를 가져옵니다.
-            UnitSpawner.DefenseUnit unitType = UnitSpawner.DefenseUnit.valueOf(reqId);
+            UnitSpawner.DefenseUnit unitType;
+            try {
+                unitType = UnitSpawner.DefenseUnit.fromId(reqId);
+            } catch (IllegalArgumentException e) {
+                return; // 존재하지 않는 유닛일 경우 스킵
+            }
 
             // 2. 보유량 조회 (패킷으로 받은 ID 기반)
             int owned = ownedCounts.getOrDefault(unitType.getId(), 0);
@@ -701,7 +742,7 @@ public class RtsScreen extends Screen {
             return true;
         }
 
-        if (input.key() == org.lwjgl.glfw.GLFW.GLFW_KEY_TAB && !unitList.isEmpty()) {
+        if (input.key() == GLFW.GLFW_KEY_TAB && !unitList.isEmpty()) {
             // 1. 인덱스 순환
             this.currentIndex = (this.currentIndex + 1) % unitList.size();
 
@@ -713,6 +754,43 @@ public class RtsScreen extends Screen {
 //             ClientPlayNetworking.send(new RequestUnitDetailPayload(mainEntry.entityId()));
 
             return true;
+        }
+
+        // 2. Q, W, E, R 키 매핑 (GLFW 키 코드 활용)
+        int[] hotkeys = {GLFW.GLFW_KEY_Q, GLFW.GLFW_KEY_W, GLFW.GLFW_KEY_E, GLFW.GLFW_KEY_R};
+
+        for (int i = 0; i < hotkeys.length; i++) {
+            if (input.key() == hotkeys[i]) {
+                // [수정] getAvailableRecipes 로직 (mainUnit의 jobKey가 재료에 포함되는지 확인)
+                List<UpgradeRecipe> recipes = getAvailableRecipes(this.selectedUnit.jobKey());
+                LOGGER.info("[MingtdDebug] RtsScreen hotkeys :: " + hotkeys[i]);
+                LOGGER.info("[MingtdDebug] RtsScreen recipes.size() :: " + recipes.size());
+                if (i < recipes.size()) {
+                    UpgradeRecipe recipe = recipes.get(i);
+                    Map<String, Integer> ownedCounts = ClientUnitManager.getOwnedCounts();
+
+                    // 1. 조합 가능 여부 1차 체크 (숫자 기반)
+                    LOGGER.info("[MingtdDebug] RtsScreen hotkeys recipe.canUpgrade :: " + recipe.canUpgrade(ownedCounts));
+                    if (recipe.canUpgrade(ownedCounts)) {
+                        int mainId = this.selectedUnit.entityId();
+
+                        // 2. [핵심] 서버에 "얘네 지워줘"라고 말할 재료 ID 리스트 추출
+                        List<Integer> ingredientsToBurn = recipe.collectIngredientIds(
+                                ClientUnitManager.getOwnedList(),
+                                mainId
+                        );
+
+                        // 3. 확장된 패킷 구조로 전송
+                        ClientPlayNetworking.send(new UpgradeRequestPayload(
+                                recipe.baseId(),
+                                mainId,
+                                ingredientsToBurn // 서버는 이 목록을 그대로 discard() 함
+                        ));
+
+                        return true;
+                    }
+                }
+            }
         }
 
         // 2. 채팅 및 명령어 창 열기
@@ -735,5 +813,35 @@ public class RtsScreen extends Screen {
         }
 
         return super.keyPressed(input);
+    }
+
+    // 현재 선택된 유닛이 재료로 들어가는 레시피 리스트 반환
+    private List<UpgradeRecipe> getAvailableRecipes(String jobKey) {
+        return UpgradeRecipeLoader.RECIPES.values().stream()
+                .filter(r -> r.ingredients().containsKey(jobKey))
+                .sorted(
+                        // 1. 랭크 높은 순 (매직 > 일반)
+                        Comparator.comparingInt((UpgradeRecipe r) ->
+                                        UnitSpawner.DefenseUnit.fromId(r.resultId()).getRank()
+                                ).reversed()
+                                // 2. 선택 재료 소모량 많은 순
+                                .thenComparing(r -> r.ingredients().getOrDefault(jobKey, 0), Comparator.reverseOrder())
+                                // 3. 우선순위 높은 순
+                                .thenComparing(r ->
+                                        UnitSpawner.DefenseUnit.fromId(r.resultId()).getPriority(), Comparator.reverseOrder()
+                                )
+                                // 4. 이름순 고정
+                                .thenComparing(UpgradeRecipe::baseId)
+                )
+                .toList();
+    }
+
+    // 1. 공통 좌표 계산 메소드 생성
+    private int getUpgradeCardX(int index) {
+        return hudX + (index * (CARD_W + CARD_SPACING));
+    }
+
+    private int getUpgradeCardY() {
+        return hudY - CARD_H - 6;
     }
 }

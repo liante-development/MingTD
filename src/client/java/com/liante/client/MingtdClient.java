@@ -38,10 +38,11 @@ public class MingtdClient implements ClientModInitializer {
 
         ClientPlayNetworking.registerGlobalReceiver(UnitInventoryPayload.ID, (payload, context) -> {
             context.client().execute(() -> {
-                System.out.println("[MingTD-Client] 패킷 수신됨! 데이터 크기: " + payload.inventory().size());
+                // [수정] payload.inventory() 대신 payload.unitEntityMap()을 사용하며, 클라이언트 월드 객체를 전달합니다.
+                System.out.println("[MingTD-Client] 패킷 수신됨! 종류 수: " + payload.unitEntityMap().size());
 
-
-                ClientUnitManager.updateInventory(payload);
+                // ClientUnitManager에서 실제 엔티티 객체 리스트를 구축할 수 있도록 world를 함께 넘깁니다.
+                ClientUnitManager.updateInventory(payload, context.client().world);
             });
         });
 

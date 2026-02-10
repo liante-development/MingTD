@@ -36,10 +36,10 @@ public class DefenseState extends PersistentState {
                     Codec.INT.fieldOf("waveStep").forGetter(s -> s.waveStep),
                     Codec.INT.fieldOf("monsterCount").forGetter(s -> s.monsterCount),
                     Codec.INT.fieldOf("wispCount").forGetter(s -> s.wispCount),
-                    // [추가] 유닛 데이터 Map 저장 (UUID 문자열 키와 Enum 이름 값)
+                    // [수정 포인트 1] 저장 시 type.name()이 아닌 type.getId()를 사용 (소문자로 저장)
                     Codec.unboundedMap(Codec.STRING, Codec.STRING).fieldOf("unitData").forGetter(s -> {
                         Map<String, String> map = new HashMap<>();
-                        s.unitData.forEach((uuid, type) -> map.put(uuid.toString(), type.name()));
+                        s.unitData.forEach((uuid, type) -> map.put(uuid.toString(), type.getId()));
                         return map;
                     })
             ).apply(instance, (statusName, wave, count, wisp, unitDataMap) -> {
@@ -48,10 +48,13 @@ public class DefenseState extends PersistentState {
                 state.waveStep = wave;
                 state.monsterCount = count;
                 state.wispCount = wisp;
-                // [로드] 문자열을 다시 UUID와 Enum으로 복구
-                unitDataMap.forEach((uuidStr, typeName) ->
-                        state.unitData.put(UUID.fromString(uuidStr), UnitSpawner.DefenseUnit.valueOf(typeName))
-                );
+                unitDataMap.forEach((uuidStr, typeId) -> {
+                    try {
+                        state.unitData.put(UUID.fromString(uuidStr), UnitSpawner.DefenseUnit.fromId(typeId));
+                    } catch (IllegalArgumentException e) {
+                        LOGGER.error("❌ [데이터 복구 실패] 알 수 없는 유닛 ID: {}", typeId);
+                    }
+                });
                 return state;
             })
     );

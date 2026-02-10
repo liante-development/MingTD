@@ -10,36 +10,37 @@ import net.minecraft.network.packet.CustomPayload;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Identifier;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
-public record UnitInventoryPayload(Map<String, Integer> inventory) implements CustomPayload {
+public record UnitInventoryPayload(Map<String, List<Integer>> unitEntityMap) implements CustomPayload {
     public static final Id<UnitInventoryPayload> ID = new Id<>(Identifier.of("mingtd", "unit_inventory"));
 
     @Override
     public Id<? extends CustomPayload> getId() { return ID; }
 
+    // 복잡한 구조를 위한 코덱 정의 (Map<String, List<Integer>>)
     public static final PacketCodec<RegistryByteBuf, UnitInventoryPayload> CODEC = PacketCodec.tuple(
-            PacketCodecs.map(java.util.HashMap::new, PacketCodecs.STRING, PacketCodecs.VAR_INT),
-            UnitInventoryPayload::inventory,
+            PacketCodecs.map(HashMap::new, PacketCodecs.STRING, PacketCodecs.VAR_INT.collect(PacketCodecs.toList())),
+            UnitInventoryPayload::unitEntityMap,
             UnitInventoryPayload::new
     );
 
     /**
-     * [동기화 메서드] 서버의 최신 상태를 조회해서 패킷을 직접 쏩니다.
+     * [동기화 메서드] 서버의 실제 엔티티들을 수집해서 ID 목록을 전송
      */
     public static void sendSync(ServerPlayerEntity player) {
-        Map<String, Integer> currentUnits = new HashMap<>();
+        // 종류별 엔티티 ID 리스트를 담을 맵
+        Map<String, List<Integer>> unitEntityMap = new HashMap<>();
 
         for (Entity entity : player.getEntityWorld().iterateEntities()) {
             if (entity instanceof MingtdUnit unit && player.getUuid().equals(unit.getOwnerUuid())) {
                 String unitId = unit.getUnitId();
-                // [로그 추가] 어떤 엔티티가 어떤 ID를 주는지 확인
-                System.out.println("[MingTD-Server] EntityID: " + unit.getId() + " -> Job: " + unitId);
-                currentUnits.put(unitId, currentUnits.getOrDefault(unitId, 0) + 1);
+
+                // 종류별로 리스트에 엔티티 ID 추가
+                unitEntityMap.computeIfAbsent(unitId, k -> new ArrayList<>()).add(unit.getId());
             }
         }
-        ServerPlayNetworking.send(player, new UnitInventoryPayload(currentUnits));
+
+        ServerPlayNetworking.send(player, new UnitInventoryPayload(unitEntityMap));
     }
 }

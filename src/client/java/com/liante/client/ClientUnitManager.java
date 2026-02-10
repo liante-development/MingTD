@@ -1,24 +1,41 @@
 package com.liante.client;
 
+import com.liante.MingtdUnit;
 import com.liante.network.UnitInventoryPayload;
+import net.minecraft.client.world.ClientWorld;
+import net.minecraft.entity.Entity;
+import net.minecraft.util.math.Box;
 
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 public class ClientUnitManager {
     private static Map<String, Integer> ownedCounts = new HashMap<>();
+    private static List<MingtdUnit> ownedList = new ArrayList<>();
 
-    // 패킷 수신 시 전체 보유량 갱신
-    public static void updateInventory(UnitInventoryPayload payload) {
-        System.out.println("[MingTD-Manager] 데이터 교체 중... 이전 크기: " + ownedCounts.size() + " -> 새 크기: " + payload.inventory().size());
+    public static void updateInventory(UnitInventoryPayload payload, ClientWorld world) {
+        Map<String, Integer> newCounts = new HashMap<>();
+        List<MingtdUnit> newList = new ArrayList<>();
 
+        // 서버에서 온 엔티티 ID 맵을 순회
+        payload.unitEntityMap().forEach((unitId, entityIds) -> {
+            newCounts.put(unitId, entityIds.size()); // 개수 저장
 
-        ownedCounts = payload.inventory();
+            for (int id : entityIds) {
+                Entity entity = world.getEntityById(id);
+                if (entity instanceof MingtdUnit unit) {
+                    newList.add(unit); // 실제 객체 저장
+                }
+            }
+        });
+
+        ownedCounts = newCounts;
+        ownedList = newList;
+
+        System.out.println("[MingTD-Manager] 동기화 완료: 유닛 총 " + ownedList.size() + "마리");
     }
 
-    // RtsScreen에서 기존에 약속한 메서드 명칭 유지
-    public static Map<String, Integer> getOwnedCounts() {
-        return ownedCounts;
-    }
+    public static Map<String, Integer> getOwnedCounts() { return ownedCounts; }
+    public static List<MingtdUnit> getOwnedList() { return ownedList; }
 }
