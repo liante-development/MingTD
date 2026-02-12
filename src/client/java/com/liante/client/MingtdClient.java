@@ -1,6 +1,7 @@
 package com.liante.client;
 
 import com.liante.Mingtd;
+import com.liante.ModEntities;
 import com.liante.network.MultiUnitPayload;
 import com.liante.network.UnitInventoryPayload;
 import com.liante.network.UnitStatPayload;
@@ -8,7 +9,10 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
+import net.minecraft.client.render.entity.ZombieEntityRenderer;
 
+import static com.liante.ModEntities.DEFENSE_MONSTER_TYPE;
+import static com.liante.ModEntities.MINGTD_UNIT_TYPE;
 import static com.mojang.text2speech.Narrator.LOGGER;
 
 public class MingtdClient implements ClientModInitializer {
@@ -16,7 +20,9 @@ public class MingtdClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        EntityRendererRegistry.register(Mingtd.MINGTD_UNIT_TYPE, MingtdUnitRenderer::new);
+        EntityRendererRegistry.register(MINGTD_UNIT_TYPE, MingtdUnitRenderer::new);
+        // 몬스터 렌더러 등록: 일단 좀비 모델을 빌려 쓰도록 설정합니다.
+        EntityRendererRegistry.register(DEFENSE_MONSTER_TYPE, DefenseMonsterRenderer::new);
 
         ClientPlayNetworking.registerGlobalReceiver(Mingtd.OpenRtsScreenPayload.ID, (payload, context) -> {
             context.client().execute(() -> {

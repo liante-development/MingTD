@@ -1,22 +1,22 @@
 package com.liante.spawner;
 
+import com.liante.*;
 import com.liante.config.DefenseState;
-import com.liante.Mingtd;
-import com.liante.MingtdUnit;
 import com.liante.network.UnitInventoryPayload;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.entity.SpawnReason;
+import net.minecraft.entity.attribute.EntityAttributeModifier;
+import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.item.Item;
 import net.minecraft.item.Items;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
-import net.minecraft.util.math.Box;
 
 import java.util.*;
 
-import static com.mojang.text2speech.Narrator.LOGGER;
+import static com.liante.ModEntities.MINGTD_UNIT_TYPE;
 
 public class UnitSpawner {
     public enum DefenseUnit {
@@ -86,7 +86,7 @@ public class UnitSpawner {
 
         // 2. 일반 등급 중에서 랜덤 선택
         DefenseUnit selectedUnit = normalUnits.get(world.random.nextInt(normalUnits.size()));
-        MingtdUnit unitEntity = Mingtd.MINGTD_UNIT_TYPE.create(world, SpawnReason.MOB_SUMMONED);
+        MingtdUnit unitEntity = MINGTD_UNIT_TYPE.create(world, SpawnReason.MOB_SUMMONED);
 
         if (unitEntity != null) {
             double spawnX = Mingtd.SPAWN_POS.getX() + 0.5;
@@ -112,9 +112,39 @@ public class UnitSpawner {
         }
     }
 
+    public static void spawnMannequin(ServerPlayerEntity player, ServerWorld world, BlockPos pos, DefenseUnit selectedUnit) {
+        // 1. 엔티티 생성 (기존 로직 동일)
+        MingtdUnit unitEntity = MINGTD_UNIT_TYPE.create(world, SpawnReason.COMMAND);
+
+        if (unitEntity != null) {
+            // 2. 좌표 설정 (입력받은 pos 기준 중앙)
+            double spawnX = pos.getX() + 0.5;
+            double spawnY = pos.getY(); // 마네킹은 바닥에 딱 붙도록 +0.0
+            double spawnZ = pos.getZ() + 0.5;
+
+            unitEntity.refreshPositionAndAngles(spawnX, spawnY, spawnZ, 0, 0);
+
+            // 3. 유닛 데이터 주입 (Enum 기반)
+            unitEntity.setUnitType(selectedUnit);
+            unitEntity.setCustomName(Text.literal("§7[마네킹] §f" + selectedUnit.getDisplayName()));
+            unitEntity.setCustomNameVisible(true);
+            unitEntity.setOwnerUuid(player.getUuid());
+
+            // 4. [마네킹 핵심 설정] AI 및 무적 처리
+            unitEntity.setAiDisabled(true);   // 이동 및 공격 AI 중지
+            unitEntity.setInvulnerable(true); // 데미지 면역
+            unitEntity.setPersistent();       // 멀리 가도 사라지지 않음
+
+            // 5. 월드에 소환
+            world.spawnEntity(unitEntity);
+
+            player.sendMessage(Text.literal("§e마네킹: " + selectedUnit.getDisplayName() + "§a이(가) 배치되었습니다!"), false);
+        }
+    }
+
     public static void spawnSpecificUnit(ServerPlayerEntity player, ServerWorld world, DefenseUnit unitType, BlockPos pos) {
         // Mingtd.MINGTD_UNIT_TYPE는 본인의 메인 클래스에 등록된 EntityType 변수명으로 확인하세요!
-        MingtdUnit unitEntity = Mingtd.MINGTD_UNIT_TYPE.create(world, SpawnReason.MOB_SUMMONED);
+        MingtdUnit unitEntity = MINGTD_UNIT_TYPE.create(world, SpawnReason.MOB_SUMMONED);
 
         if (unitEntity != null) {
             // 소환 위치 설정 (발 밑 블록 중심을 위해 +0.5)
@@ -137,6 +167,52 @@ public class UnitSpawner {
 
             // [로그] 승급 결과 로그 출력
             // LOGGER.info("[MingtdUpgrade] 승급 소환: " + unitType.getDisplayName());
+        }
+    }
+
+    public static void spawnDummy(ServerPlayerEntity player, ServerWorld world, BlockPos pos) {
+        // 1. 타입을 DEFENSE_MONSTER_TYPE으로 변경하여 몬스터 모델(좀비 등)로 소환
+        DefenseMonsterEntity dummy = ModEntities.DEFENSE_MONSTER_TYPE.create(world, SpawnReason.COMMAND);
+
+        if (dummy != null) {
+            dummy.refreshPositionAndAngles(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, 0, 0);
+
+            // 2. 허수아비 기본 설정
+            dummy.setCustomName(Text.literal("§6[훈련용 허수아비]"));
+            dummy.setCustomNameVisible(true);
+            dummy.setAiDisabled(true); // 움직이지 않게 설정
+            dummy.setInvulnerable(false);
+            dummy.addCommandTag("dummy");
+            // 3. 체력 설정 (100만)
+            var hpInstance = dummy.getAttributeInstance(EntityAttributes.MAX_HEALTH);
+            if (hpInstance != null) {
+                hpInstance.setBaseValue(1000000.0);
+                dummy.setHealth(1000000.0f);
+            }
+
+            // 4. [중요] 오늘 우리가 만든 방어력 속성 테스트용 설정
+            // 이 더미를 때려서 방어력이 잘 작동하는지 확인할 수 있습니다.
+            var physDef = dummy.getAttributeInstance(ModAttributes.PHYSICAL_DEFENSE);
+            if (physDef != null) {
+                physDef.setBaseValue(50.0); // 물리 방어력 50 (데미지 약 33% 감소 예정)
+            }
+
+            var magDef = dummy.getAttributeInstance(ModAttributes.MAGIC_DEFENSE);
+            if (magDef != null) {
+                magDef.setBaseValue(20.0); // 마법 방어력 20
+            }
+
+            // 5. 기타 외형 및 상태 설정
+            dummy.getAttributeInstance(EntityAttributes.KNOCKBACK_RESISTANCE).setBaseValue(1.0);
+            dummy.getAttributeInstance(EntityAttributes.MOVEMENT_SPEED).setBaseValue(0.0);
+
+            // 1.21.2의 SCALE 속성 활용
+            var scaleAttr = dummy.getAttributeInstance(EntityAttributes.SCALE);
+            if (scaleAttr != null) scaleAttr.setBaseValue(1.2);
+
+            // 6. 소환 및 메시지
+            world.spawnEntity(dummy);
+            player.sendMessage(Text.literal("§6[MingTD] §e물리 방어력 50§a을 가진 테스트 더미가 소환되었습니다!"), false);
         }
     }
 }

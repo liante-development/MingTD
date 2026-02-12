@@ -1,5 +1,6 @@
 package com.liante.client;
 
+import com.liante.DefenseMonsterEntity;
 import com.liante.MingtdUnit;
 import com.liante.network.MoveUnitPayload;
 import com.liante.network.SelectUnitPayload;
@@ -7,7 +8,6 @@ import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.mob.ZombieEntity;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import org.slf4j.Logger;
@@ -17,7 +17,7 @@ import java.util.*;
 
 public class SelectionManager {
     private final MinecraftClient client;
-    private final List<ZombieEntity> selectedZombies = new ArrayList<>();
+    private final List<DefenseMonsterEntity> selectedMonsters = new ArrayList<>();
     private static final Logger LOGGER = LoggerFactory.getLogger("MingTD-RTS");
 
     // 드래그 상태 관리
@@ -35,10 +35,10 @@ public class SelectionManager {
     // 좌클릭 시작: 드래그 시작 지점(월드 좌표) 저장
     public void startDragging(Vec3d worldPos, double screenX, double screenY) {
         // 새로운 드래그 시작 시 기존 리스트의 발광을 클라이언트에서도 즉시 끔
-        for (ZombieEntity z : selectedZombies) {
+        for (DefenseMonsterEntity z : selectedMonsters) {
             z.setGlowing(false);
         }
-        selectedZombies.clear();
+        selectedMonsters.clear();
 
         for (LivingEntity e : selectedUnits) e.setGlowing(false);
         selectedUnits.clear();
@@ -109,7 +109,7 @@ public class SelectionManager {
             } else {
                 // [규칙 2] 내 유닛이 없고 몬스터(Zombie)만 있다면 가장 첫 번째 몬스터만 '단일 선택'
                 LivingEntity firstMonster = found.get(0);
-                if (firstMonster instanceof ZombieEntity) {
+                if (firstMonster instanceof DefenseMonsterEntity) {
                     firstMonster.setGlowing(true);
                     selectedUnits.add(firstMonster);
                 }
@@ -141,8 +141,8 @@ public class SelectionManager {
     }
 
     public void clearSelection() {
-        for (ZombieEntity z : selectedZombies) z.setGlowing(false);
-        selectedZombies.clear();
+        for (DefenseMonsterEntity z : selectedMonsters) z.setGlowing(false);
+        selectedMonsters.clear();
     }
 
     public void stopDragging() {

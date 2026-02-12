@@ -1,5 +1,6 @@
 package com.liante.client;
 
+import com.liante.DefenseMonsterEntity;
 import com.liante.MingtdUnit;
 import com.liante.manager.CameraMovePayload;
 import com.liante.network.MultiUnitPayload;
@@ -15,6 +16,7 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.screen.ingame.InventoryScreen;
 import net.minecraft.client.input.KeyInput;
 import net.minecraft.client.util.InputUtil;
 import net.minecraft.entity.Entity;
@@ -68,8 +70,8 @@ public class RtsScreen extends Screen {
 
     @Override
     public boolean mouseClicked(Click click, boolean doubled) {
-        LOGGER.info("[MingtdDebug] mouseClicked (Screen): x={}, y={}, button={}",
-                click.x(), click.y(), click.button());
+//        LOGGER.info("[MingtdDebug] mouseClicked (Screen): x={}, y={}, button={}",
+//                click.x(), click.y(), click.button());
         Vec3d mouseWorldPos = getMouseWorldPos(click.x(), click.y());
         // 1. HUD 영역 클릭 체크 (클릭이 HUD 패널 위라면 조작 무시)
         int centerX = this.width / 2;
@@ -221,7 +223,7 @@ public class RtsScreen extends Screen {
             Optional<Vec3d> hitPos = renderBox.raycast(start, end);
 
             // [로그] 델타값과 좌표 차이 출력
-            if (entity instanceof MingtdUnit || entity instanceof net.minecraft.entity.mob.ZombieEntity) {
+            if (entity instanceof MingtdUnit || entity instanceof DefenseMonsterEntity) {
                 double diffX = Math.abs(lerpX - entity.getX());
                 double diffZ = Math.abs(lerpZ - entity.getZ());
 
@@ -306,24 +308,7 @@ public class RtsScreen extends Screen {
 
     private void renderUnitHUD(DrawContext context, float mouseX, float mouseY) {
         if (unitList.isEmpty()) return;
-
-        // [최적화] 모든 렌더링에 필요한 보유량 데이터를 여기서 딱 한 번만 계산합니다.
-//        Map<String, Integer> ownedCounts = new HashMap<>();
-//        for (MultiUnitPayload.UnitEntry entry : this.unitList) {
-//            ownedCounts.put(entry.jobKey(), ownedCounts.getOrDefault(entry.jobKey(), 0) + 1);
-//        }
         Map<String, Integer> ownedCounts = ClientUnitManager.getOwnedCounts();
-        List<MingtdUnit> targets = ClientUnitManager.getOwnedList();
-
-//        if (ownedCounts.isEmpty()) {
-//            // 유닛이 있는데도 0개라면 동기화 패킷이 안 온 것임
-//            LOGGER.info("[MingTD] 현재 보유량 데이터가 비어있습니다.");
-//        } else {
-//            LOGGER.info("[MingTD] 현재 보유 유닛 종류 수: " + ownedCounts.size());
-//            ownedCounts.forEach((id, count) -> {
-//                LOGGER.info(" -> 유닛 ID: " + id + ", 보유 개수: " + count);
-//            });
-//        }
 
         if (unitList.size() == 1 && selectedUnit != null) {
             // 계산된 보유량을 상세 창으로 전달
@@ -369,7 +354,7 @@ public class RtsScreen extends Screen {
                 livingEntity.headYaw = 210.0F;
                 livingEntity.setPitch(0.0F);
 
-                net.minecraft.client.gui.screen.ingame.InventoryScreen.drawEntity(
+                InventoryScreen.drawEntity(
                         context,
                         x + 2, y + 2, x + iconSize - 2, y + iconSize - 2,
                         12,
@@ -419,17 +404,33 @@ public class RtsScreen extends Screen {
         // 3. 유닛 아바타 영역 (좌측)
         Entity entity = this.client.world.getEntityById(mainUnit.entityId());
         if (entity instanceof LivingEntity livingEntity) {
+            // 기존 상태 저장
+            float prevBodyYaw = livingEntity.bodyYaw;
+            float prevHeadYaw = livingEntity.headYaw;
+            float prevPitch = livingEntity.getPitch();
+
+            // 시선 고정 설정 (정면에서 약간 측면을 보게 하여 입체감 부여)
+            livingEntity.bodyYaw = 210.0F; // 몸체 회전
+            livingEntity.headYaw = 210.0F; // 머리 회전
+            livingEntity.setPitch(0.0F);   // 상하 각도 고정
+
             // 공유해주신 1.21.2 시그니처에 맞춘 인자 전달
             // drawEntity(context, x1, y1, x2, y2, size, scale, mouseX, mouseY, entity)
-            net.minecraft.client.gui.screen.ingame.InventoryScreen.drawEntity(
+            InventoryScreen.drawEntity(
                     context,
-                    hudX + 5, hudY + 5, hudX + 45, hudY + 45, // 사각형 범위 (x1, y1, x2, y2)
-                    20,       // size (모델 크기)
-                    0.0625f,  // scale (기본 오프셋 보정)
-                    mouseX,   // 전달받은 마우스 X
-                    mouseY,   // 전달받은 마우스 Y
+                    hudX + 5, hudY + 5, hudX + 45, hudY + 45,
+                    20,       // 크기
+                    0.0625f,  // 스케일 오프셋
+                    // mouseX, mouseY 대신 고정된 가상의 좌표를 전달하여 시선 흔들림 방지
+                    (float)(hudX + 25) - 100, // 고정된 가상 X (엔티티가 쳐다볼 지점)
+                    (float)(hudY + 25),      // 고정된 가상 Y
                     livingEntity
             );
+
+            // 상태 복구 (월드 내 실제 엔티티에 영향이 없도록)
+            livingEntity.bodyYaw = prevBodyYaw;
+            livingEntity.headYaw = prevHeadYaw;
+            livingEntity.setPitch(prevPitch);
         } else {
             // 엔티티를 찾지 못했을 때의 대체 텍스트
             context.fill(hudX + 5, hudY + 5, hudX + 45, hudY + 45, 0xFF222222);
@@ -700,8 +701,8 @@ public class RtsScreen extends Screen {
         Vec3d finalDir = new Vec3d(rayDir.x(), rayDir.y(), rayDir.z()).normalize();
 
         // 디버그 로그: 카메라가 이동해도 이 벡터는 마우스 위치에 따라 정확히 변해야 합니다.
-//        LOGGER.info(String.format("[MingtdMatrix] 레이 방향: X:%.3f, Y:%.3f, Z:%.3f",
-//                finalDir.x, finalDir.y, finalDir.z));
+        LOGGER.info(String.format("[MingtdMatrix] 레이 방향: X:%.3f, Y:%.3f, Z:%.3f",
+                finalDir.x, finalDir.y, finalDir.z));
 
         return finalDir;
     }
@@ -756,38 +757,40 @@ public class RtsScreen extends Screen {
             return true;
         }
 
-        // 2. Q, W, E, R 키 매핑 (GLFW 키 코드 활용)
-        int[] hotkeys = {GLFW.GLFW_KEY_Q, GLFW.GLFW_KEY_W, GLFW.GLFW_KEY_E, GLFW.GLFW_KEY_R};
 
-        for (int i = 0; i < hotkeys.length; i++) {
-            if (input.key() == hotkeys[i]) {
-                // [수정] getAvailableRecipes 로직 (mainUnit의 jobKey가 재료에 포함되는지 확인)
-                List<UpgradeRecipe> recipes = getAvailableRecipes(this.selectedUnit.jobKey());
-                LOGGER.info("[MingtdDebug] RtsScreen hotkeys :: " + hotkeys[i]);
-                LOGGER.info("[MingtdDebug] RtsScreen recipes.size() :: " + recipes.size());
-                if (i < recipes.size()) {
-                    UpgradeRecipe recipe = recipes.get(i);
-                    Map<String, Integer> ownedCounts = ClientUnitManager.getOwnedCounts();
+        if (this.selectedUnit != null) {
+            // 2. Q, W, E, R 키 매핑 (GLFW 키 코드 활용)
+            int[] hotkeys = {GLFW.GLFW_KEY_Q, GLFW.GLFW_KEY_W, GLFW.GLFW_KEY_E, GLFW.GLFW_KEY_R};
+            for (int i = 0; i < hotkeys.length; i++) {
+                if (input.key() == hotkeys[i]) {
+                    // [수정] getAvailableRecipes 로직 (mainUnit의 jobKey가 재료에 포함되는지 확인)
+                    List<UpgradeRecipe> recipes = getAvailableRecipes(this.selectedUnit.jobKey());
+                    LOGGER.info("[MingtdDebug] RtsScreen hotkeys :: " + hotkeys[i]);
+                    LOGGER.info("[MingtdDebug] RtsScreen recipes.size() :: " + recipes.size());
+                    if (i < recipes.size()) {
+                        UpgradeRecipe recipe = recipes.get(i);
+                        Map<String, Integer> ownedCounts = ClientUnitManager.getOwnedCounts();
 
-                    // 1. 조합 가능 여부 1차 체크 (숫자 기반)
-                    LOGGER.info("[MingtdDebug] RtsScreen hotkeys recipe.canUpgrade :: " + recipe.canUpgrade(ownedCounts));
-                    if (recipe.canUpgrade(ownedCounts)) {
-                        int mainId = this.selectedUnit.entityId();
+                        // 1. 조합 가능 여부 1차 체크 (숫자 기반)
+                        LOGGER.info("[MingtdDebug] RtsScreen hotkeys recipe.canUpgrade :: " + recipe.canUpgrade(ownedCounts));
+                        if (recipe.canUpgrade(ownedCounts)) {
+                            int mainId = this.selectedUnit.entityId();
 
-                        // 2. [핵심] 서버에 "얘네 지워줘"라고 말할 재료 ID 리스트 추출
-                        List<Integer> ingredientsToBurn = recipe.collectIngredientIds(
-                                ClientUnitManager.getOwnedList(),
-                                mainId
-                        );
+                            // 2. [핵심] 서버에 "얘네 지워줘"라고 말할 재료 ID 리스트 추출
+                            List<Integer> ingredientsToBurn = recipe.collectIngredientIds(
+                                    ClientUnitManager.getOwnedList(),
+                                    mainId
+                            );
 
-                        // 3. 확장된 패킷 구조로 전송
-                        ClientPlayNetworking.send(new UpgradeRequestPayload(
-                                recipe.baseId(),
-                                mainId,
-                                ingredientsToBurn // 서버는 이 목록을 그대로 discard() 함
-                        ));
+                            // 3. 확장된 패킷 구조로 전송
+                            ClientPlayNetworking.send(new UpgradeRequestPayload(
+                                    recipe.baseId(),
+                                    mainId,
+                                    ingredientsToBurn // 서버는 이 목록을 그대로 discard() 함
+                            ));
 
-                        return true;
+                            return true;
+                        }
                     }
                 }
             }

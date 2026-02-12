@@ -1,5 +1,6 @@
 package com.liante.map;
 
+import com.liante.DefenseMonsterEntity;
 import com.liante.config.DefenseConfig;
 import com.liante.mixin.MobEntityAccessor;
 import net.minecraft.block.BlockState;
@@ -9,7 +10,6 @@ import net.minecraft.entity.EntityType;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.SpawnReason;
 import net.minecraft.entity.attribute.EntityAttributes;
-import net.minecraft.entity.mob.ZombieEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.server.world.ServerWorld;
@@ -19,6 +19,8 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.border.WorldBorder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.util.List;
 
 public class MapGenerator {
     public static final int SIZE = 16;
@@ -75,12 +77,12 @@ public class MapGenerator {
         int radius = DefenseConfig.MAP_SIZE + 10;
         Box clearBox = new Box(origin).expand(radius, 256, radius);
 
-        java.util.List<ZombieEntity> targets = world.getEntitiesByClass(
-                ZombieEntity.class, clearBox, entity -> true
+        List<DefenseMonsterEntity> targets = world.getEntitiesByClass(
+                DefenseMonsterEntity.class, clearBox, entity -> true
         );
 
-        for (ZombieEntity zombie : targets) {
-            zombie.discard();
+        for (DefenseMonsterEntity monster : targets) {
+            monster.discard();
         }
         System.out.println("기존 유닛 제거 완료: " + targets.size() + "마리");
     }
@@ -245,37 +247,12 @@ public class MapGenerator {
     private static void clearExistingZombies(ServerWorld world) {
         int totalRemoved = 0;
         for (ServerWorld anyWorld : world.getServer().getWorlds()) {
-            java.util.List<ZombieEntity> targets = anyWorld.getEntitiesByClass(ZombieEntity.class, new Box(-500, 0, -500, 500, 256, 500), entity -> true);
-            for (ZombieEntity zombie : targets) {
-                zombie.discard();
+            java.util.List<DefenseMonsterEntity> targets = anyWorld.getEntitiesByClass(DefenseMonsterEntity.class, new Box(-500, 0, -500, 500, 256, 500), entity -> true);
+            for (DefenseMonsterEntity monster : targets) {
+                monster.discard();
                 totalRemoved++;
             }
         }
         System.out.println("기존 유닛 제거 완료: " + totalRemoved);
-    }
-
-    public static void spawnZombies(ServerWorld world, BlockPos pos) {
-        double centerX = pos.getX() + SIZE + GAP + (SIZE / 2.0);
-        double centerZ = pos.getZ() + (SIZE / 2.0);
-
-        for (int i = 0; i < 5; i++) {
-            ZombieEntity zombie = EntityType.ZOMBIE.create(world, SpawnReason.MOB_SUMMONED);
-            if (zombie != null) {
-                zombie.refreshPositionAndAngles(centerX + (i * 1.5D), pos.getY() + 1, centerZ, 0, 0);
-
-                // 이제 정상적으로 인터페이스 캐스팅이 작동합니다.
-                // (패키지 경로에 맞게 MobEntityAccessor를 import 하세요)
-                MobEntityAccessor accessor = (MobEntityAccessor) zombie;
-
-                accessor.getGoalSelector().clear(goal -> true);
-                accessor.getTargetSelector().clear(goal -> true);
-
-                zombie.setAiDisabled(false);
-                zombie.getAttributeInstance(EntityAttributes.KNOCKBACK_RESISTANCE).setBaseValue(1.0D);
-                zombie.equipStack(EquipmentSlot.HEAD, new ItemStack(Items.IRON_HELMET));
-
-                world.spawnEntity(zombie);
-            }
-        }
     }
 }

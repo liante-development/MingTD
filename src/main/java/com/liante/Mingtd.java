@@ -10,6 +10,7 @@ import com.liante.network.*;
 import com.liante.recipe.UpgradeRecipeLoader;
 import com.liante.spawner.UnitSpawner;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
+import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -19,14 +20,13 @@ import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.fabricmc.fabric.api.object.builder.v1.entity.FabricDefaultAttributeRegistry;
 import net.fabricmc.fabric.api.resource.v1.ResourceLoader;
+import net.minecraft.command.argument.BlockPosArgumentType;
 import net.minecraft.entity.*;
-import net.minecraft.entity.mob.ZombieEntity;
+import net.minecraft.entity.attribute.ClampedEntityAttribute;
+import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.network.RegistryByteBuf;
 import net.minecraft.network.codec.PacketCodec;
 import net.minecraft.network.packet.CustomPayload;
-import net.minecraft.registry.Registries;
-import net.minecraft.registry.Registry;
-import net.minecraft.registry.RegistryKey;
 import net.minecraft.resource.ResourceType;
 import net.minecraft.scoreboard.*;
 import net.minecraft.server.MinecraftServer;
@@ -42,8 +42,11 @@ import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.GameMode;
 import net.minecraft.world.rule.GameRules;
 
+import java.lang.reflect.Field;
 import java.util.*;
 
+import static com.liante.ModEntities.DEFENSE_MONSTER_TYPE;
+import static com.liante.ModEntities.MINGTD_UNIT_TYPE;
 import static com.mojang.text2speech.Narrator.LOGGER;
 
 public class Mingtd implements ModInitializer {
@@ -54,18 +57,6 @@ public class Mingtd implements ModInitializer {
     private int spawnTimer = 0;
 
     public static final int MAX_MONSTER_COUNT = 100;
-
-    // 1. 유닛의 고유 ID를 상수로 정의
-    public static final Identifier DEFENSE_UNIT_ID = Identifier.of("mingtd", "defense_unit");
-
-    // 2. 엔티티 타입 등록 (PathAwareEntity에 맞춰 빌더 수정)
-    public static final EntityType<MingtdUnit> MINGTD_UNIT_TYPE = Registry.register(
-            Registries.ENTITY_TYPE,
-            DEFENSE_UNIT_ID,
-            EntityType.Builder.create(MingtdUnit::new, SpawnGroup.CREATURE)
-                    .dimensions(0.6f, 1.95f) // 플레이어와 동일한 크기
-                    .build(RegistryKey.of(Registries.ENTITY_TYPE.getKey(), DEFENSE_UNIT_ID))
-    );
 
     @Override
     public void onInitialize() {
@@ -84,8 +75,17 @@ public class Mingtd implements ModInitializer {
                 new UpgradeRecipeLoader()
         );
 
-        // onInitialize에서 속성 등록
-        FabricDefaultAttributeRegistry.register(MINGTD_UNIT_TYPE, MingtdUnit.createAttributes());
+        ModAttributes.registerAttributes();
+        ModEntities.registerEntities();
+
+        // 몬스터 엔티티 타입에 해당 속성들을 주입 (이곳에 추가!)
+        FabricDefaultAttributeRegistry.register(
+                ModEntities.DEFENSE_MONSTER_TYPE,
+                DefenseMonsterEntity.createMonsterAttributes() // 클래스 내부에 정의한 빌더 호출
+        );
+
+        expandHealthLimit();
+
 
         // 날씨 및 시간 고정 로직
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
@@ -278,6 +278,38 @@ public class Mingtd implements ModInitializer {
 //                                UpgradeManager.tryUpgrade(context.getSource().getPlayer());
                                 return 1;
                         }))
+                    .then(CommandManager.literal("mannequin")
+                        .then(CommandManager.argument("pos", BlockPosArgumentType.blockPos())
+                                .then(CommandManager.argument("unit_id", StringArgumentType.string())
+                                        .executes(context -> {
+                                            // 예시: /mp mannequin <x> <y> <z> <unit_id>
+
+                                            ServerPlayerEntity player = context.getSource().getPlayer();
+                                            ServerWorld world = context.getSource().getWorld();
+                                            BlockPos pos = BlockPosArgumentType.getBlockPos(context, "pos");
+
+                                            // 2. 위에서 정의한 이름과 똑같이 "unit_id"로 가져옵니다.
+                                            String unitId = StringArgumentType.getString(context, "unit_id");
+
+                                            try {
+                                                UnitSpawner.DefenseUnit unit = UnitSpawner.DefenseUnit.fromId(unitId);
+                                                UnitSpawner.spawnMannequin(player, world, pos, unit);
+                                                return 1;
+                                            } catch (Exception e) {
+                                                context.getSource().sendError(Text.literal("§c존재하지 않는 유닛 ID입니다: " + unitId));
+                                                return 0;
+                                            }
+                            }))))
+                    .then(CommandManager.literal("dummy")
+                            .then(CommandManager.argument("pos", BlockPosArgumentType.blockPos())
+                                    .executes(context -> {
+                                        ServerPlayerEntity player = context.getSource().getPlayer();
+                                        ServerWorld world = context.getSource().getWorld();
+                                        BlockPos pos = BlockPosArgumentType.getBlockPos(context, "pos");
+
+                                        UnitSpawner.spawnDummy(player, world, pos);
+                                        return 1;
+                                    })))
                     .then(CommandManager.literal("debug_pos")
                             .executes(context -> {
                                 ServerPlayerEntity player = context.getSource().getPlayer();
@@ -337,7 +369,7 @@ public class Mingtd implements ModInitializer {
                     unit.startManualMove(target.x, target.y + 1.0D, target.z, 1.3D);
 
 //                    LOGGER.info("[MingTD] 수동 이동 모드 활성화: {}", target);
-                } else if (entity instanceof ZombieEntity) {
+                } else if (entity instanceof DefenseMonsterEntity) {
                     // 몬스터 이동 시도 시 로그 (선택 사항)
 //                    LOGGER.info("[Warning] 몬스터 이동 명령 거부됨: " + entity.getId());
                 }
@@ -385,8 +417,8 @@ public class Mingtd implements ModInitializer {
                                     type.getDisplayName(),
                                     type.getPriority() // Enum에 priority 필드 추가 필요
                             ));
-                        } else if (entity instanceof ZombieEntity zombie) {
-                            entries.add(new MultiUnitPayload.UnitEntry(zombie.getId(), "ZOMBIE", "Monster", 0));
+                        } else if (entity instanceof DefenseMonsterEntity monster) {
+                            entries.add(new MultiUnitPayload.UnitEntry(monster.getId(), "MONSTER", "Monster", 0));
                         }
                     }
                 }
@@ -479,21 +511,28 @@ public class Mingtd implements ModInitializer {
             }
 
             // 3. 필드 내 활성 몬스터 수집 및 카운트
-            List<ZombieEntity> activeZombies = new ArrayList<>();
+            List<DefenseMonsterEntity> activeMonsters = new ArrayList<>();
             Vec3d centerPos = Vec3d.ofCenter(SPAWN_POS);
 
             for (Entity entity : world.iterateEntities()) {
-                if (entity instanceof ZombieEntity zombie && zombie.isAlive() && entity.getType() != Mingtd.MINGTD_UNIT_TYPE) {
+                if (entity instanceof DefenseMonsterEntity monster && monster.isAlive() && entity.getType() == DEFENSE_MONSTER_TYPE) {
                     // [수정] getPos() 대신 getX, getY, getZ를 사용하여 Vec3d를 직접 생성
-                    Vec3d zombiePos = new Vec3d(zombie.getX(), zombie.getY(), zombie.getZ());
+                    Vec3d zombiePos = new Vec3d(monster.getX(), monster.getY(), monster.getZ());
 
+                    // 더미인지 확인
+                    boolean isDummy = monster.getCommandTags().contains("dummy");
                     if (zombiePos.distanceTo(centerPos) < 50.0) {
-                        activeZombies.add(zombie);
+                        if (isDummy) {
+                            // 더미는 체력바만 업데이트하고 이동 리스트(activeMonsters)에는 넣지 않음
+                            waveManager.updateDummyHealthBar(monster);
+                        } else {
+                            activeMonsters.add(monster);
+                        }
                     }
                 }
 
                 // 아군: 커스텀 타입인 경우
-                if (entity.getType() == Mingtd.MINGTD_UNIT_TYPE) {
+                if (entity.getType() == MINGTD_UNIT_TYPE && entity.isAlive()) {
                     // RTS 선택 및 이동 패킷 대상
                 }
             }
@@ -505,7 +544,7 @@ public class Mingtd implements ModInitializer {
             int previousCount = state.monsterCount;
 
             // 2. 새로운 값을 계산하여 대입
-            int currentCount = activeZombies.size();
+            int currentCount = activeMonsters.size();
             state.monsterCount = currentCount;
 
             // 3. 이전 값과 현재 값을 비교
@@ -559,7 +598,7 @@ public class Mingtd implements ModInitializer {
             }
 
             // 6. 몬스터 AI 동작 (WaveManager)
-            waveManager.tickMonsters(activeZombies);
+            waveManager.tickMonsters(activeMonsters);
         });
     }
 
@@ -589,11 +628,32 @@ public class Mingtd implements ModInitializer {
             // 제거할 대상을 리스트에 먼저 모은 뒤 한꺼번에 지웁니다.
             List<Entity> toRemove = new ArrayList<>();
             for (Entity entity : world.iterateEntities()) {
-                if (entity instanceof ZombieEntity) {
+                if (entity instanceof DefenseMonsterEntity) {
                     toRemove.add(entity);
                 }
             }
             toRemove.forEach(Entity::discard);
+        }
+    }
+
+    public static void expandHealthLimit() {
+        try {
+            // 1. MAX_HEALTH 어트리뷰트 객체를 가져옴 (RegistryEntry에서 실제 객체 추출)
+            Object attribute = EntityAttributes.MAX_HEALTH.value();
+
+            if (attribute instanceof ClampedEntityAttribute clamped) {
+                // 2. ClampedEntityAttribute의 maxValue 필드에 접근 (자바 리플렉션)
+                // 'maxValue'는 마인크래프트 내부 필드 이름입니다.
+                Field maxValueField = ClampedEntityAttribute.class.getDeclaredField("maxValue");
+                maxValueField.setAccessible(true); // 프라이빗 필드 접근 허용
+
+                // 3. 제한 값을 1,000,000으로 수정
+                maxValueField.setDouble(clamped, 1000000.0);
+
+                System.out.println("[MingTD] 체력 제한이 1,000,000으로 성공적으로 해제되었습니다.");
+            }
+        } catch (Exception e) {
+            System.err.println("[MingTD] 체력 제한 해제 중 오류 발생: " + e.getMessage());
         }
     }
 }
