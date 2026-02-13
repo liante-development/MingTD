@@ -7,8 +7,8 @@ import com.liante.network.MultiUnitPayload;
 import com.liante.network.UnitStatPayload;
 import com.liante.network.UpgradeRequestPayload;
 import com.liante.recipe.UpgradeRecipe;
-import com.liante.recipe.UpgradeRecipeLoader;
-import com.liante.spawner.UnitSpawner;
+import com.liante.unit.MingtdUnits;
+import com.liante.unit.UnitInfo;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.Click;
@@ -33,7 +33,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
-import java.util.stream.Collectors;
+
+import static com.liante.unit.MingtdUnits.UNIT_REGISTRY;
 
 public class RtsScreen extends Screen {
     // 1. 로그 기록을 위한 Logger 선언
@@ -86,7 +87,7 @@ public class RtsScreen extends Screen {
         if (click.button() == 0 && this.selectedUnit != null) {
             List<UpgradeRecipe> recipes = getAvailableRecipes(this.selectedUnit.jobKey());
             // renderUpgradeStack에서 사용한 좌표 계산 로직과 동일해야 함
-            LOGGER.info("[MingtdDebug] RtsScreen mouseClicked ");
+            LOGGER.info("[MingtdDebug] RtsScreen mouseClicked this.selectedUnit.jobKey() :: " + this.selectedUnit.jobKey());
 
             for (int i = 0; i < recipes.size(); i++) {
                 int cardX = getUpgradeCardX(i);
@@ -113,7 +114,8 @@ public class RtsScreen extends Screen {
 
                         // 3. 확장된 패킷 구조로 전송
                         ClientPlayNetworking.send(new UpgradeRequestPayload(
-                                recipe.baseId(),
+                                recipe.recipeId(),
+                                recipe.resultId(),
                                 mainId,
                                 ingredientsToBurn // 서버는 이 목록을 그대로 discard() 함
                         ));
@@ -260,7 +262,7 @@ public class RtsScreen extends Screen {
     }
 
     public void updateTarget(UnitStatPayload payload) {
-//        LOGGER.info("[MingTD] HUD 데이터 수신 성공: " + payload.name());
+        LOGGER.info("[MingTD] HUD 데이터 수신 성공: " + payload.name());
         this.selectedUnit = payload;
     }
 
@@ -461,27 +463,25 @@ public class RtsScreen extends Screen {
     }
 
     private void renderUpgradeStack(DrawContext context, MultiUnitPayload.UnitEntry mainUnit, int hudX, int hudY, float mouseX, float mouseY, Map<String, Integer> ownedCounts) {
-        String currentUnitId = mainUnit.jobKey();
+        String jobKey = mainUnit.id();
         // 레시피 필터링
-        List<UpgradeRecipe> possibleRecipes = UpgradeRecipeLoader.RECIPES.values().stream()
-                // 1. 현재 선택한 유닛이 재료에 포함된 레시피만 필터링
-                .filter(r -> r.ingredients().containsKey(currentUnitId))
+        List<UpgradeRecipe> possibleRecipes = MingtdUnits.RECIPES_BY_INGREDIENT
+                .getOrDefault(jobKey, new ArrayList<>())
+                .stream()
+                // 2. 정렬 로직 적용
                 .sorted(
-                        // 우선순위 1: 결과물 유닛의 랭크(rank) 높은 순 (매직 > 일반)
-                        Comparator.comparingInt((UpgradeRecipe r) ->
-                                        UnitSpawner.DefenseUnit.fromId(r.resultId()).getRank()
-                                ).reversed()
+                        // [1] 결과물 유닛의 등급(Rarity)이 높은 순 (UNIQUE > RARE > MAGIC > NORMAL)
+                        Comparator.comparingInt((UpgradeRecipe r) -> {
+                                    UnitInfo resultUnit = MingtdUnits.UNIT_REGISTRY.get(r.resultId());
+                                    // resultUnit.rarity()가 record 메서드라고 가정 (필요 시 getRarity()로 수정)
+                                    return resultUnit != null ? resultUnit.rarity().ordinal() : -1;
+                                }).reversed()
 
-                                // 우선순위 2: 선택된 재료(currentUnitId)가 많이 소모되는 순서 (3개 > 1개)
-                                .thenComparing(r -> r.ingredients().getOrDefault(currentUnitId, 0), Comparator.reverseOrder())
+                                // [2] 해당 재료(jobKey)를 더 많이 소모하는 레시피 우선
+                                .thenComparing(r -> r.ingredients().getOrDefault(jobKey, 0), Comparator.reverseOrder())
 
-                                // 우선순위 3: 결과물 유닛의 우선순위(priority) 높은 순
-                                .thenComparing(r ->
-                                        UnitSpawner.DefenseUnit.fromId(r.resultId()).getPriority(), Comparator.reverseOrder()
-                                )
-
-                                // 우선순위 4: 이름(baseId) 사전순 (v1, v2, v3 순서 고정용)
-                                .thenComparing(UpgradeRecipe::baseId)
+                                // [3] 이름순(결과 ID)으로 최종 고정
+                                .thenComparing(UpgradeRecipe::resultId)
                 )
                 .toList();
 
@@ -514,8 +514,8 @@ public class RtsScreen extends Screen {
             context.fill(cardX, cardY, cardX + CARD_W, cardY + 1, borderColor);
 
             // [수정] 결과물 ID(resultId)를 통해 실제 표시할 이름을 가져옵니다.
-            UnitSpawner.DefenseUnit resultUnit = UnitSpawner.DefenseUnit.fromId(recipe.resultId());
-            String displayName = resultUnit.getDisplayName();
+            UnitInfo resultUnit = UNIT_REGISTRY.get(recipe.resultId());
+            String displayName = resultUnit.name();
 
             // 단축키 매핑용 배열 정의
             String[] hotkeys = {"Q", "W", "E", "R"};
@@ -527,7 +527,7 @@ public class RtsScreen extends Screen {
 //            context.drawText(this.textRenderer, "§b[U" + (i + 1) + "]", cardX + 5, cardY + 16, 0xFFFFFFFF, false);
 
             if (isHovered) {
-                renderUpgradeTooltip(context, recipe, currentUnitId, mouseX, mouseY, ownedCounts);
+                renderUpgradeTooltip(context, recipe, jobKey, mouseX, mouseY, ownedCounts);
             }
         }
     }
@@ -552,18 +552,18 @@ public class RtsScreen extends Screen {
 
         recipe.ingredients().forEach((reqId, reqCount) -> {
             // [참고하신 로직 적용]
-            UnitSpawner.DefenseUnit unitType;
+            UnitInfo unitType;
             try {
-                unitType = UnitSpawner.DefenseUnit.fromId(reqId);
+                unitType = UNIT_REGISTRY.get(reqId);
             } catch (IllegalArgumentException e) {
                 return; // 존재하지 않는 유닛일 경우 스킵
             }
 
             // 2. 보유량 조회 (패킷으로 받은 ID 기반)
-            int owned = ownedCounts.getOrDefault(unitType.getId(), 0);
+            int owned = ownedCounts.getOrDefault(unitType.id(), 0);
 
             boolean isComplete = owned >= reqCount;
-            boolean isMain = unitType.getId().equals(currentId);
+            boolean isMain = unitType.id().equals(currentId);
 
             String statusColor = isComplete ? "§a" : "§c";
             String prefix = isComplete ? "§a✔ " : "§7- ";
@@ -571,7 +571,7 @@ public class RtsScreen extends Screen {
             // 3. [핵심] HUD에서 사용한 것과 동일하게 unitType.getDisplayName()(또는 .name())을 사용
             // 만약 DefenseUnit Enum에 displayName이 있다면 그것을,
             // HUD에서 사용한 name()이 Enum 고유 이름이라면 그것을 사용합니다.
-            String displayName = unitType.getDisplayName();
+            String displayName = unitType.name();
 
             lines.add(Text.literal(prefix + displayName + " : " + statusColor + owned + "§7/" + reqCount + (isMain ? " §6(본인)" : "")));
         });
@@ -582,15 +582,17 @@ public class RtsScreen extends Screen {
     private void logUpgradeRequirements(MultiUnitPayload.UnitEntry mainUnit) {
         if (mainUnit == null) return;
 
-        String currentUnitId = mainUnit.jobKey();
+        String currentUnitId = mainUnit.id();
 
         // 1. 해당 유닛이 재료로 포함된 모든 레시피 수집
-        List<UpgradeRecipe> possibleRecipes = new ArrayList<>();
-        for (UpgradeRecipe recipe : UpgradeRecipeLoader.RECIPES.values()) {
-            if (recipe.ingredients().containsKey(currentUnitId)) {
-                possibleRecipes.add(recipe);
-            }
-        }
+        List<UpgradeRecipe> possibleRecipes = new ArrayList<>(
+                MingtdUnits.RECIPES_BY_INGREDIENT.getOrDefault(currentUnitId, List.of())
+        );
+
+        possibleRecipes.sort(Comparator.comparingInt((UpgradeRecipe r) -> {
+            UnitInfo resultUnit = MingtdUnits.UNIT_REGISTRY.get(r.resultId());
+            return resultUnit != null ? resultUnit.rarity().ordinal() : -1;
+        }).reversed());
 
         // 2. 로그 출력 시작
         System.out.println("---- [Unit Upgrade Path Check] ----");
@@ -603,7 +605,7 @@ public class RtsScreen extends Screen {
 
             for (UpgradeRecipe recipe : possibleRecipes) {
                 System.out.println("------------------------------------");
-                System.out.println("▶ 경로 ID: " + recipe.baseId()); // v1, v2, v3 구분용
+                System.out.println("▶ 경로 ID: " + recipe.recipeId()); // v1, v2, v3 구분용
                 System.out.println("▶ 결과물: " + recipe.resultId());
                 System.out.println("▶ 필요 재료:");
 
@@ -784,7 +786,8 @@ public class RtsScreen extends Screen {
 
                             // 3. 확장된 패킷 구조로 전송
                             ClientPlayNetworking.send(new UpgradeRequestPayload(
-                                    recipe.baseId(),
+                                    recipe.recipeId(),
+                                    recipe.resultId(),
                                     mainId,
                                     ingredientsToBurn // 서버는 이 목록을 그대로 discard() 함
                             ));
@@ -820,21 +823,24 @@ public class RtsScreen extends Screen {
 
     // 현재 선택된 유닛이 재료로 들어가는 레시피 리스트 반환
     private List<UpgradeRecipe> getAvailableRecipes(String jobKey) {
-        return UpgradeRecipeLoader.RECIPES.values().stream()
-                .filter(r -> r.ingredients().containsKey(jobKey))
+        // 1. 역방향 인덱스 맵에서 jobKey(재료)를 사용하는 레시피 리스트를 즉시 가져옴
+        // 없으면 빈 리스트를 반환하여 NullPointerException 방지
+        List<UpgradeRecipe> recipes = MingtdUnits.RECIPES_BY_INGREDIENT.getOrDefault(jobKey, new ArrayList<>());
+
+        return recipes.stream()
                 .sorted(
-                        // 1. 랭크 높은 순 (매직 > 일반)
-                        Comparator.comparingInt((UpgradeRecipe r) ->
-                                        UnitSpawner.DefenseUnit.fromId(r.resultId()).getRank()
-                                ).reversed()
-                                // 2. 선택 재료 소모량 많은 순
+                        // 1. 결과물 유닛의 등급(Rarity) 높은 순 (UNIQUE > RARE > MAGIC > NORMAL)
+                        Comparator.comparingInt((UpgradeRecipe r) -> {
+                                    UnitInfo resultUnit = MingtdUnits.UNIT_REGISTRY.get(r.resultId());
+                                    // rarity()가 메서드라면 resultUnit.rarity() 호출
+                                    return resultUnit != null ? resultUnit.rarity().ordinal() : -1;
+                                }).reversed()
+
+                                // 2. 해당 재료(jobKey)를 더 많이 소모하는 레시피 우선
                                 .thenComparing(r -> r.ingredients().getOrDefault(jobKey, 0), Comparator.reverseOrder())
-                                // 3. 우선순위 높은 순
-                                .thenComparing(r ->
-                                        UnitSpawner.DefenseUnit.fromId(r.resultId()).getPriority(), Comparator.reverseOrder()
-                                )
-                                // 4. 이름순 고정
-                                .thenComparing(UpgradeRecipe::baseId)
+
+                                // 3. 이름순(결과 ID)으로 최종 고정
+                                .thenComparing(UpgradeRecipe::resultId)
                 )
                 .toList();
     }

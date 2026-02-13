@@ -46,4 +46,14 @@ public class DefenseConfig {
         double z = origin.getZ() + ((r - 0.5) * SCREEN_TOP);
         return new Vec3d(x, DefenseConfig.GROUND_Y, z);
     }
+
+    public enum AttackType {
+        PHYSICAL("물리"),
+        MAGIC("마법"),
+        PURE("절대"); // 방어력을 무시하는 고정 데미지 타입 (필요시 사용)
+
+        private final String label;
+        AttackType(String label) { this.label = label; }
+        public String getLabel() { return label; }
+    }
 }

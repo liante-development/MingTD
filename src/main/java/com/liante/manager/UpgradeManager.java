@@ -1,107 +1,52 @@
 package com.liante.manager;
 
-import com.liante.MingtdUnit;
-import com.liante.network.UnitInventoryPayload;
-import com.liante.recipe.UpgradeRecipe;
-import com.liante.recipe.UpgradeRecipeLoader;
 import com.liante.spawner.UnitSpawner;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
+import com.liante.unit.MingtdUnits;
+import com.liante.unit.UnitInfo;
 import net.minecraft.entity.Entity;
+import net.minecraft.particle.ParticleTypes;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.text.Text;
 import net.minecraft.util.math.BlockPos;
 import java.util.*;
-import java.util.stream.Collectors;
 
 public class UpgradeManager {
 
     /**
      * 클라이언트가 보낸 재료 리스트(ingredientIds)를 기반으로 합성을 시도합니다.
      */
-    public static void tryUpgrade(ServerPlayerEntity player, String recipeId, int mainUnitId, List<Integer> ingredientIds) {
-        UpgradeRecipe recipe = UpgradeRecipeLoader.RECIPES.get(recipeId);
-        ServerWorld world = player.getEntityWorld();
+    public static void tryUpgrade(ServerPlayerEntity player, String recipeId, String resultId, int mainUnitId, List<Integer> ingredientIds) {
+        ServerWorld world = (ServerWorld) player.getEntityWorld();
+
+        // 1. 결과물 정보 가져오기
+        UnitInfo resultInfo = MingtdUnits.UNIT_REGISTRY.get(resultId);
+        if (resultInfo == null) return;
+
+        // 2. 메인 유닛 찾아서 위치 저장하고 지우기
         Entity mainUnit = world.getEntityById(mainUnitId);
+        if (mainUnit == null) return;
 
-        // 1. 기본 검증 (레시피 및 메인 유닛 존재 여부)
-        if (recipe == null || mainUnit == null || !mainUnit.isAlive()) {
-            player.sendMessage(Text.literal("§c오류: 합성 대상이 올바르지 않습니다."), true);
-            return;
-        }
+        BlockPos spawnPos = mainUnit.getBlockPos();
+        mainUnit.discard();
 
-        // 2. 재료 유효성 검증 (보안: 클라이언트가 보낸 ID들이 실제로 존재하고 내 소유인지 확인)
-        List<Entity> targetsToRemove = new ArrayList<>();
+        // 3. 클라이언트가 보낸 재료 리스트: 있으면 지우고 없으면 통과
         for (int id : ingredientIds) {
-            Entity entity = world.getEntityById(id);
-            // 내 유닛이고, 살아있으며, 메인 유닛과 다른 개체인지 확인
-            if (entity instanceof MingtdUnit unit &&
-                    unit.getOwnerUuid().equals(player.getUuid()) &&
-                    unit.isAlive() &&
-                    unit != mainUnit) {
-                targetsToRemove.add(unit);
+            Entity ingredient = world.getEntityById(id);
+            if (ingredient != null) {
+                ingredient.discard();
             }
         }
 
-        // 레시피 요구량과 클라이언트가 보낸 유효 재료 수가 일치하는지 확인
-        // (레시피 ingredients의 총합과 비교하거나, 각 타입별 개수 검증 가능)
-        if (isSelectionValid(recipe, targetsToRemove, mainUnit)) {
-            executeUpgrade(player, world, recipe, mainUnit, targetsToRemove);
-        } else {
-            player.sendMessage(Text.literal("§c합성 실패: 선택된 재료가 레시피와 일치하지 않습니다."), true);
-        }
-    }
-
-    /**
-     * 클라이언트가 보낸 재료들이 레시피 요구 사항을 충족하는지 검사
-     */
-    private static boolean isSelectionValid(UpgradeRecipe recipe, List<Entity> targets, Entity mainUnit) {
-        Map<String, Integer> counts = new HashMap<>();
-
-        // 메인 유닛 종류 카운트
-        String mainId = ((MingtdUnit)mainUnit).getUnitId();
-        counts.put(mainId, 1);
-
-        // 보낸 재료들 종류 카운트
-        for (Entity e : targets) {
-            String id = ((MingtdUnit)e).getUnitId();
-            counts.put(id, counts.getOrDefault(id, 0) + 1);
-        }
-
-        // 레시피와 대조
-        for (var entry : recipe.ingredients().entrySet()) {
-            if (counts.getOrDefault(entry.getKey(), 0) < entry.getValue()) return false;
-        }
-        return true;
-    }
-
-    /**
-     * 실제 유닛 제거 및 상위 유닛 생성 로직 (판단 로직 제거됨)
-     */
-    private static void executeUpgrade(ServerPlayerEntity player, ServerWorld world, UpgradeRecipe recipe, Entity mainUnit, List<Entity> targets) {
-        BlockPos spawnPos = mainUnit.getBlockPos();
-
+        // 4. 결과물 유닛 소환
         try {
-            // 1. [목록 기반 제거] 클라이언트가 지목하여 검증된 재료들 즉시 제거
-            targets.forEach(Entity::discard);
+            UnitSpawner.spawnSpecificUnit(player, world, resultInfo, spawnPos);
 
-            // 2. 메인 유닛 제거
-            mainUnit.discard();
-
-            // 3. 결과물 생성
-            UnitSpawner.DefenseUnit resultEnum = UnitSpawner.DefenseUnit.fromId(recipe.resultId());
-            UnitSpawner.spawnSpecificUnit(player, world, resultEnum, spawnPos);
-
-            // 4. 성공 피드백
-            triggerUpgradeEffects(player);
-
+            // 피드백 (이펙트)
+            world.spawnParticles(ParticleTypes.HAPPY_VILLAGER, spawnPos.getX() + 0.5, spawnPos.getY() + 1.0, spawnPos.getZ() + 0.5, 20, 0.5, 0.5, 0.5, 0.1);
+            player.sendMessage(Text.literal("§a§l[MingTD] 승급 성공!"), true);
         } catch (Exception e) {
-            player.sendMessage(Text.literal("§c[MingTD] 합성 엔진 실행 오류"), false);
             e.printStackTrace();
         }
-    }
-
-    private static void triggerUpgradeEffects(ServerPlayerEntity player) {
-        player.sendMessage(Text.literal("§a§l[MingTD] 승급 성공!"), true);
     }
 }

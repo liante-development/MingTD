@@ -1,0 +1,82 @@
+[
+  {
+    "id": "warrior",
+    "name": "전사",
+    "rarity": "NORMAL",
+    "mainItem": "minecraft:iron_sword",
+    "baseDamage": 10.0,
+    "attackSpeed": 1.0,
+    "attackRange": 3.5,
+    "attackType": "PHYSICAL",
+    "recipes": [],
+    "skills": []
+  },
+  {
+    "id": "archer",
+    "name": "궁수",
+    "rarity": "NORMAL",
+    "mainItem": "minecraft:bow",
+    "baseDamage": 10.0,
+    "attackSpeed": 1.0,
+    "attackRange": 15.0,
+    "attackType": "PHYSICAL",
+    "recipes": [],
+    "skills": []
+  },
+  {
+    "id": "mage",
+    "name": "마법사",
+    "rarity": "NORMAL",
+    "mainItem": "minecraft:blaze_rod",
+    "baseDamage": 15.0,
+    "attackSpeed": 0.8,
+    "attackRange": 12.0,
+    "attackType": "MAGIC",
+    "recipes": [],
+    "skills": []
+  },
+  {
+    "id": "magic_warrior",
+    "name": "마법 전사",
+    "rarity": "MAGIC",
+    "mainItem": "minecraft:diamond_sword",
+    "baseDamage": 35.0,
+    "attackSpeed": 1.2,
+    "attackRange": 5.0,
+    "attackType": "MAGIC",
+    "recipes": [
+      {
+        "recipeId": "warrior_v1",
+        "ingredients": { "warrior": 3 }
+      },
+      {
+        "recipeId": "warrior_v2",
+        "ingredients": { "warrior": 2, "archer": 1 }
+      },
+      {
+        "recipeId": "warrior_v3",
+        "ingredients": { "warrior": 1, "archer": 2 }
+      }
+    ],
+    "skills": [
+      { "id": "bash", "params": { "chance": 0.1 } }
+    ]
+  },
+  {
+    "id": "magic_archer",
+    "name": "마법 궁수",
+    "rarity": "MAGIC",
+    "mainItem": "minecraft:netherite_bow",
+    "baseDamage": 28.0,
+    "attackSpeed": 1.5,
+    "attackRange": 18.0,
+    "attackType": "MAGIC",
+    "recipes": [
+      {
+        "recipeId": "archer_v1",
+        "ingredients": { "archer": 3 }
+      }
+    ],
+    "skills": []
+  }
+]

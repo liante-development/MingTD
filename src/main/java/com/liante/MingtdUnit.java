@@ -5,7 +5,8 @@ import com.liante.network.UnitInventoryPayload;
 import com.liante.network.UnitStatPayload;
 import com.liante.renderer.MingtdArrow;
 import com.liante.renderer.MingtdMagicMissile;
-import com.liante.spawner.UnitSpawner;
+import com.liante.unit.MingtdUnits;
+import com.liante.unit.UnitInfo;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking;
 import net.minecraft.entity.*;
 import net.minecraft.entity.ai.RangedAttackMob;
@@ -22,35 +23,37 @@ import net.minecraft.entity.mob.MobEntity;
 import net.minecraft.entity.mob.PathAwareEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.projectile.ProjectileEntity;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NbtCompound;
 import net.minecraft.particle.ParticleTypes;
+import net.minecraft.registry.Registries;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.sound.SoundEvents;
 import net.minecraft.storage.ReadView;
 import net.minecraft.storage.WriteView;
-import net.minecraft.util.ActionResult;
-import net.minecraft.util.Hand;
-import net.minecraft.util.Uuids;
-import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.*;
 import net.minecraft.util.math.Box;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import java.util.List;
 import java.util.UUID;
 
+import static com.liante.unit.MingtdUnits.UNIT_REGISTRY;
+
 public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
-    private static final TrackedData<Integer> UNIT_TYPE = DataTracker.registerData(MingtdUnit.class, TrackedDataHandlerRegistry.INTEGER);
+    private static final TrackedData<String> UNIT_ID = DataTracker.registerData(
+            MingtdUnit.class,
+            TrackedDataHandlerRegistry.STRING
+    );
     private static final Logger LOGGER = LoggerFactory.getLogger("MingTD-RTS");
 
     // MingtdUnit.java 내부
     private boolean isManualMoving = false;
     // 1. 유닛 정보를 저장할 필드 추가
-    private UnitSpawner.DefenseUnit unitType;
+    private UnitInfo unitType;
 
     private UUID ownerUuid; // 유닛의 주인 UUID
 
@@ -78,9 +81,9 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
 
     // 4. ID를 바로 가져오는 편의 메서드
     public String getUnitId() {
-        UnitSpawner.DefenseUnit type = this.getUnitType();
+        UnitInfo type = this.getUnitType();
         if (type != null) {
-            return type.getId(); // "warrior", "archer" 등 소문자 반환
+            return type.id(); // "warrior", "archer" 등 소문자 반환
         }
         // [팁] unknown보다는 기본값(WARRIOR 등)을 주거나
         // 로그를 남겨 어떤 유닛이 정체성을 잃었는지 확인하는 것이 디버깅에 좋습니다.
@@ -107,9 +110,12 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
         }
 
         if (!this.getEntityWorld().isClient()) {
+            if (this.getUnitType() == null) {
+                return;
+            }
             // [원인 해결] 재접속 시 무효화된 target을 실시간으로 복구
             if (this.getTarget() == null || !this.getTarget().isAlive()) {
-                float range = this.getUnitType().getRange();
+                double range = this.getUnitType().attackRange();
                 // 탐색 범위를 로그로 확인하기 위해 변수화
                 Box searchBox = this.getBoundingBox().expand(range);
 
@@ -161,17 +167,19 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
     @Override
     protected void initDataTracker(DataTracker.Builder builder) {
         super.initDataTracker(builder);
-        builder.add(UNIT_TYPE, UnitSpawner.DefenseUnit.ARCHER.ordinal());
+        builder.add(UNIT_ID, "archer"); // 기본 유닛 ID 등록
     }
 
-    public void setUnitType(UnitSpawner.DefenseUnit type) {
+    public void setUnitInfo(UnitInfo type) {
         if (type == null) return;
 
         // [핵심] 메모리 필드에 값을 할당해야 writeCustomData에서 getId()를 호출할 수 있음
         this.unitType = type;
 
-        this.dataTracker.set(UNIT_TYPE, type.ordinal());
-        this.equipStack(EquipmentSlot.MAINHAND, new ItemStack(type.getMainItem()));
+        this.dataTracker.set(UNIT_ID, type.id());
+        Identifier itemId = Identifier.of(type.mainItem());
+        Item item = Registries.ITEM.get(itemId);
+        this.equipStack(EquipmentSlot.MAINHAND, new ItemStack(item));
 
         // [추가] 설정 시점에 DefenseState에 자신의 정보를 명시적으로 저장
         if (!this.getEntityWorld().isClient()) {
@@ -183,15 +191,19 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
 //        LOGGER.info("[MingtdDebug] 타입 설정 및 저장 완료: {}", type.name());
     }
 
-    public UnitSpawner.DefenseUnit getUnitType() {
-        return UnitSpawner.DefenseUnit.values()[this.dataTracker.get(UNIT_TYPE)];
+    public UnitInfo getUnitType() {
+        // 1. DataTracker에서 저장된 String ID를 가져옴
+        String id = this.dataTracker.get(UNIT_ID);
+
+        // 2. MingtdUnits 레지스트리에서 해당 ID의 객체를 반환
+        return MingtdUnits.get(id);
     }
 
     public void refreshGoals() {
         this.goalSelector.getGoals().clear();
         this.targetSelector.add(1, new ActiveTargetGoal<>(this, HostileEntity.class, true));
 
-        float currentRange = this.getUnitType().getRange(); // 직업별 사거리
+        float currentRange = this.getUnitType().attackRange(); // 직업별 사거리
 
         this.goalSelector.add(1, new ProjectileAttackGoal(this, 1.0D, 20, currentRange) { // 10.0F 대신 적용
             @Override
@@ -207,15 +219,16 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
 
     @Override
     public void shootAt(LivingEntity target, float pullProgress) {
-        UnitSpawner.DefenseUnit type = this.getUnitType();
+        UnitInfo type = this.getUnitType();
         // [로그 1] 현재 공격을 시도하는 유닛의 실제 타입 확인
 //        LOGGER.info("[MingtdDebug] 유닛 타입: {} | 타겟: {}", type.name(), target.getType().getName().getString());
 
         if (!(this.getEntityWorld() instanceof ServerWorld world)) return;
+        if (type == null) return;
 
-        float damage = type.getDamage();
+        float damage = type.baseDamage();
 
-        if (type == UnitSpawner.DefenseUnit.WARRIOR || type == UnitSpawner.DefenseUnit.ROGUE) {
+        if (type.id().equals("warrior") || type.id().equals("rogue")) {
             // [로그 2] 근접 직업 분기 진입 확인
 //            LOGGER.info("[MingtdDebug] {} 직업 - applyInstantDamage 실행", type.name());
             applyInstantDamage(world, target, type, damage);
@@ -227,7 +240,7 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
         this.swingHand(Hand.MAIN_HAND);
     }
 
-    private void applyInstantDamage(ServerWorld world, LivingEntity target, UnitSpawner.DefenseUnit type, float damage) {
+    private void applyInstantDamage(ServerWorld world, LivingEntity target, UnitInfo type, float damage) {
         // 고정값 5.0F 대신 전달받은 damage 변수 사용
         target.damage(world, world.getDamageSources().mobAttack(this), damage);
 
@@ -235,7 +248,7 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
         double ty = target.getBodyY(0.5);
         double tz = target.getZ();
 
-        if (type == UnitSpawner.DefenseUnit.WARRIOR) {
+        if (type.id().equals("warrior")) {
             world.spawnParticles(ParticleTypes.CRIT, tx, ty, tz, 15, 0.2, 0.2, 0.2, 0.5);
             this.playSound(SoundEvents.ENTITY_PLAYER_ATTACK_CRIT, 1.0f, 1.0f);
         } else {
@@ -244,15 +257,15 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
         }
     }
 
-    private void spawnHomingProjectile(ServerWorld world, LivingEntity target, UnitSpawner.DefenseUnit type, float damage) {
-        if (type == UnitSpawner.DefenseUnit.ARCHER) {
+    private void spawnHomingProjectile(ServerWorld world, LivingEntity target, UnitInfo type, float damage) {
+        if (type.id().equals("archer")) {
             MingtdArrow arrow = new MingtdArrow(world, this, target);
             arrow.setDamage(damage);
             // 화살 전용 유도 설정 (기존 로직 유지)
             this.setupHoming(arrow, target, 1.8F);
             world.spawnEntity(arrow);
         }
-        else if (type == UnitSpawner.DefenseUnit.MAGE) {
+        else if (type.id().equals("mage")) {
             // 생성자에서 damage 값을 넘겨주도록 변경
             MingtdMagicMissile missile = new MingtdMagicMissile(world, this, target, damage);
 
@@ -280,11 +293,11 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
     public void onStartedTrackingBy(ServerPlayerEntity player) {
         super.onStartedTrackingBy(player);
         DefenseState state = DefenseState.getServerState((ServerWorld) this.getEntityWorld());
-        UnitSpawner.DefenseUnit savedType = state.getUnitInfo(this.getUuid());
+        UnitInfo savedType = state.getUnitInfo(this.getUuid());
 
         // 저장된 데이터가 있을 때만 동기화 수행
         if (savedType != null) {
-            this.setUnitType(savedType);
+            this.setUnitInfo(savedType);
         }
     }
 
@@ -340,23 +353,23 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
 
     public void syncUnitStatsToClient(ServerPlayerEntity player) {
         // 1. Enum에서 기본 정보 가져오기
-        UnitSpawner.DefenseUnit unitType = this.getUnitType(); // 현재 유닛의 타입을 반환하는 getter가 필요합니다.
+        UnitInfo unitType = this.getUnitType(); // 현재 유닛의 타입을 반환하는 getter가 필요합니다.
 
         // 2. 실시간 스탯 계산 (현재는 마나 필드가 없으므로 임시값 100을 사용, 향후 필드 추가 필요)
         float currentMana = 50.0f;  // TODO: 유닛 필드로 mana 추가 필요
         float maxMana = 100.0f;
-        float currentDamage = unitType.getDamage(); // 향후 버프 시스템 연동 시 수정
+        float currentDamage = unitType.baseDamage(); // 향후 버프 시스템 연동 시 수정
         float attackSpeed = 1.0f;   // 향후 공속 시스템 연동 시 수정
 
         // 3. 패킷 전송
         ServerPlayNetworking.send(player, new UnitStatPayload(
                 this.getId(),
-                unitType.getDisplayName(),
+                unitType.name(),
                 currentMana,
                 maxMana,
                 currentDamage,
                 attackSpeed,
-                unitType.name()
+                unitType.id()
         ));
     }
 
@@ -372,22 +385,22 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
         String typeId = view.getString("unit_type_id", null);
         if (typeId != null) {
             try {
-                UnitSpawner.DefenseUnit loadedType = UnitSpawner.DefenseUnit.fromId(typeId);
+                UnitInfo loadedType = UNIT_REGISTRY.get(typeId);
 
                 // [수정] 단순 할당 대신 setUnitType을 호출하여
                 // 필드, 트래커, 장비(아이템), AI를 모두 한 번에 복구합니다.
                 if (loadedType != null) {
-                    this.setUnitType(loadedType);
+                    this.setUnitInfo(loadedType);
                     LOGGER.info("[MingtdDebug] readCustomData: Loaded and set type to {}", typeId);
                 }
             } catch (IllegalArgumentException e) {
                 // 잘못된 ID일 경우 기본값으로 안전하게 복구
                 LOGGER.error("[MingtdDebug] Unknown unit_type_id: {}. Falling back to WARRIOR.", typeId);
-                this.setUnitType(UnitSpawner.DefenseUnit.WARRIOR);
+                this.setUnitInfo(UNIT_REGISTRY.get("warrior"));
             }
         } else {
             // 데이터가 아예 없는 경우 (최초 생성 등)에도 안전하게 기본값 설정
-            this.setUnitType(UnitSpawner.DefenseUnit.WARRIOR);
+            this.setUnitInfo(UNIT_REGISTRY.get("warrior"));
         }
     }
 
@@ -398,13 +411,14 @@ public class MingtdUnit extends PathAwareEntity implements RangedAttackMob {
             view.put("owner_uuid", Uuids.INT_STREAM_CODEC, this.ownerUuid);
         }
         if (this.unitType != null) {
-            view.putString("unit_type_id", this.unitType.getId());
-            LOGGER.info("[MingtdDebug] writeCustomData this.unitType.getId() :: " + this.unitType.getId());
+            view.putString("unit_type_id", this.unitType.id());
+            LOGGER.info("[MingtdDebug] writeCustomData this.unitType.getId() :: " + this.unitType.id());
         } else {
             // 만약 필드가 비어있다면 DataTracker에서 역으로 가져와서라도 저장
-            int typeIndex = this.dataTracker.get(UNIT_TYPE);
-            view.putString("unit_type_id", UnitSpawner.DefenseUnit.values()[typeIndex].getId());
-            LOGGER.info("[MingtdDebug] writeCustomData this.unitType == null this.unitType.getId() :: " + UnitSpawner.DefenseUnit.values()[typeIndex].getId());
+            String unitId = this.dataTracker.get(UNIT_ID);
+
+            view.putString("unit_type_id", unitId);
+            LOGGER.info("[MingtdDebug] writeCustomData this.unitType == null unitId :: " + unitId);
         }
     }
 

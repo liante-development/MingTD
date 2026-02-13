@@ -9,12 +9,12 @@ import java.util.Map;
 
 import static com.mojang.text2speech.Narrator.LOGGER;
 
-public record UpgradeRecipe(String baseId, Map<String, Integer> ingredients, String resultId) {
-    public String id() { return this.baseId; }
+public record UpgradeRecipe(String recipeId, Map<String, Integer> ingredients, String resultId) {
+    public String id() { return this.recipeId; }
 
     // [기존] 개수 기반 체크
     public boolean canUpgrade(Map<String, Integer> ownedUnits) {
-        LOGGER.info("[MingtdDebug] Checking Recipe: {} (Base: {})", this.resultId(), this.baseId());
+        LOGGER.info("[MingtdDebug] Checking Recipe: {} (Base: {})", this.resultId(), this.recipeId());
         if (ownedUnits == null) {
             LOGGER.warn("[MingtdDebug] canUpgrade failed: ownedUnits is null");
             return false;

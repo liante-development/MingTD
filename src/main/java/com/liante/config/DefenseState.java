@@ -1,6 +1,8 @@
 package com.liante.config;
 
 import com.liante.spawner.UnitSpawner;
+import com.liante.unit.MingtdUnits;
+import com.liante.unit.UnitInfo;
 import com.mojang.serialization.Codec;
 import com.mojang.serialization.codecs.RecordCodecBuilder;
 import net.minecraft.world.PersistentState;
@@ -27,7 +29,7 @@ public class DefenseState extends PersistentState {
 
     private int wispCount = 0; // 위습 자원
     // DefenseState 클래스 내부 예시
-    private final Map<UUID, UnitSpawner.DefenseUnit> unitData = new HashMap<>();
+    private final Map<UUID, UnitInfo> unitData = new HashMap<>();
 
     // Codec도 업데이트해야 함 (상태값 추가)
     public static final Codec<DefenseState> CODEC = RecordCodecBuilder.create(instance ->
@@ -39,7 +41,7 @@ public class DefenseState extends PersistentState {
                     // [수정 포인트 1] 저장 시 type.name()이 아닌 type.getId()를 사용 (소문자로 저장)
                     Codec.unboundedMap(Codec.STRING, Codec.STRING).fieldOf("unitData").forGetter(s -> {
                         Map<String, String> map = new HashMap<>();
-                        s.unitData.forEach((uuid, type) -> map.put(uuid.toString(), type.getId()));
+                        s.unitData.forEach((uuid, type) -> map.put(uuid.toString(), type.id()));
                         return map;
                     })
             ).apply(instance, (statusName, wave, count, wisp, unitDataMap) -> {
@@ -50,9 +52,17 @@ public class DefenseState extends PersistentState {
                 state.wispCount = wisp;
                 unitDataMap.forEach((uuidStr, typeId) -> {
                     try {
-                        state.unitData.put(UUID.fromString(uuidStr), UnitSpawner.DefenseUnit.fromId(typeId));
+                        // 중앙 레지스트리에서 유닛 정보 조회
+                        UnitInfo info = MingtdUnits.get(typeId);
+
+                        if (info != null) {
+                            state.unitData.put(UUID.fromString(uuidStr), info);
+                        } else {
+                            // JSON 로딩이 덜 되었거나 ID가 바뀐 경우 처리
+                            LOGGER.error("❌ [데이터 복구 실패] 알 수 없는 유닛 ID: {}", typeId);
+                        }
                     } catch (IllegalArgumentException e) {
-                        LOGGER.error("❌ [데이터 복구 실패] 알 수 없는 유닛 ID: {}", typeId);
+                        LOGGER.error("❌ [데이터 복구 실패] UUID 형식 오류: {}", uuidStr);
                     }
                 });
                 return state;
@@ -122,12 +132,13 @@ public class DefenseState extends PersistentState {
         });
     }
 
-    public void saveUnitInfo(UUID uuid, UnitSpawner.DefenseUnit type) {
-        unitData.put(uuid, type);
-        this.markDirty(); // 저장 예약
+    public void saveUnitInfo(UUID uuid, UnitInfo unit) {
+        // 유닛 객체 전체를 저장하기보다, 유닛의 'ID(String)'를 저장하는 것이 데이터 관리상 유리합니다.
+        unitData.put(uuid, unit);
+        this.markDirty(); // 데이터 변경 알림 (NBT 저장용)
     }
 
-    public UnitSpawner.DefenseUnit getUnitInfo(UUID uuid) {
+    public UnitInfo getUnitInfo(UUID uuid) {
         // 저장된 게 없으면 현재 유닛의 데이터트래커 값을 믿어야 하므로
         // 여기서는 기본값을 ARCHER로 주지 말고 null 등을 체크하는 것이 안전할 수 있습니다.
         return unitData.getOrDefault(uuid, null);

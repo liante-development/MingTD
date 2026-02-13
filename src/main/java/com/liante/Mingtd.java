@@ -7,8 +7,9 @@ import com.liante.manager.UpgradeManager;
 import com.liante.manager.WaveManager;
 import com.liante.map.MapGenerator;
 import com.liante.network.*;
-import com.liante.recipe.UpgradeRecipeLoader;
 import com.liante.spawner.UnitSpawner;
+import com.liante.unit.UnitDataLoader;
+import com.liante.unit.UnitInfo;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ModInitializer;
@@ -47,6 +48,7 @@ import java.util.*;
 
 import static com.liante.ModEntities.DEFENSE_MONSTER_TYPE;
 import static com.liante.ModEntities.MINGTD_UNIT_TYPE;
+import static com.liante.unit.MingtdUnits.UNIT_REGISTRY;
 import static com.mojang.text2speech.Narrator.LOGGER;
 
 public class Mingtd implements ModInitializer {
@@ -71,8 +73,8 @@ public class Mingtd implements ModInitializer {
         PayloadTypeRegistry.playC2S().register(UpgradeRequestPayload.ID, UpgradeRequestPayload.CODEC);
 
         ResourceLoader.get(ResourceType.SERVER_DATA).registerReloader(
-                Identifier.of("mingtd", "upgrades"),
-                new UpgradeRecipeLoader()
+                Identifier.of("mingtd", "units"),
+                new UnitDataLoader() // 새로 만들 유닛 데이터 로더
         );
 
         ModAttributes.registerAttributes();
@@ -292,7 +294,7 @@ public class Mingtd implements ModInitializer {
                                             String unitId = StringArgumentType.getString(context, "unit_id");
 
                                             try {
-                                                UnitSpawner.DefenseUnit unit = UnitSpawner.DefenseUnit.fromId(unitId);
+                                                UnitInfo unit = UNIT_REGISTRY.get(unitId);
                                                 UnitSpawner.spawnMannequin(player, world, pos, unit);
                                                 return 1;
                                             } catch (Exception e) {
@@ -410,15 +412,15 @@ public class Mingtd implements ModInitializer {
 
                         // HUD용 요약 정보 생성
                         if (entity instanceof MingtdUnit unit) {
-                            UnitSpawner.DefenseUnit type = unit.getUnitType();
+                            UnitInfo type = unit.getUnitType();
                             entries.add(new MultiUnitPayload.UnitEntry(
-                                    unit.getId(),
+                                    unit.getEntity().getId(),
+                                    type.id(),
                                     type.name(),
-                                    type.getDisplayName(),
-                                    type.getPriority() // Enum에 priority 필드 추가 필요
+                                    type.rarity().ordinal() // Enum에 priority 필드 추가 필요
                             ));
                         } else if (entity instanceof DefenseMonsterEntity monster) {
-                            entries.add(new MultiUnitPayload.UnitEntry(monster.getId(), "MONSTER", "Monster", 0));
+                            entries.add(new MultiUnitPayload.UnitEntry(monster.getId(), "MONSTER", monster.getName().getString(), 0));
                         }
                     }
                 }
@@ -469,12 +471,13 @@ public class Mingtd implements ModInitializer {
             LOGGER.info("[MingtdDebug] ServerPlayNetworking UpgradeRequestPayload ");
             // [수정] 클라이언트가 보낸 3가지 핵심 정보를 추출
             String recipeId = payload.recipeId();
+            String resultId = payload.resultId();
             int mainUnitId = payload.mainUnitEntityId();
             List<Integer> ingredientIds = payload.ingredientIds(); // 새로 추가된 재료 목록
 
             context.server().execute(() -> {
                 // [수정] UpgradeManager에 재료 목록까지 함께 넘겨줍니다.
-                UpgradeManager.tryUpgrade(player, recipeId, mainUnitId, ingredientIds);
+                UpgradeManager.tryUpgrade(player, recipeId, resultId, mainUnitId, ingredientIds);
 
                 // 결과와 상관없이 항상 최신 상태를 동기화하여 HUD를 갱신합니다.
                 UnitInventoryPayload.sendSync(player);

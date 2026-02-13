@@ -1,7 +1,6 @@
 package com.liante.client;
 
 import com.liante.Mingtd;
-import com.liante.ModEntities;
 import com.liante.network.MultiUnitPayload;
 import com.liante.network.UnitInventoryPayload;
 import com.liante.network.UnitStatPayload;
@@ -9,11 +8,9 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry;
-import net.minecraft.client.render.entity.ZombieEntityRenderer;
 
 import static com.liante.ModEntities.DEFENSE_MONSTER_TYPE;
 import static com.liante.ModEntities.MINGTD_UNIT_TYPE;
-import static com.mojang.text2speech.Narrator.LOGGER;
 
 public class MingtdClient implements ClientModInitializer {
     private static boolean shouldReturnToRts = false;

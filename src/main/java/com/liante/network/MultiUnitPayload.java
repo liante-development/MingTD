@@ -17,15 +17,14 @@ public record MultiUnitPayload(List<UnitEntry> units) implements CustomPayload {
     }
 
     // 1. UnitEntry 레코드 수정
-    public record UnitEntry(int entityId, String jobKey, String name, int priority) {
-        // [추가] 컴팩트 생성자: 패킷이 생성되거나 수신될 때 jobKey를 소문자로 강제 변환
+    public record UnitEntry(int entityId, String id, String name, int priority) {
         public UnitEntry {
-            jobKey = jobKey.toLowerCase(java.util.Locale.ROOT);
+            id = id.toLowerCase(java.util.Locale.ROOT);
         }
 
         public static final PacketCodec<RegistryByteBuf, UnitEntry> CODEC = PacketCodec.tuple(
-                PacketCodecs.VAR_INT, UnitEntry::entityId,
-                PacketCodecs.STRING, UnitEntry::jobKey,
+                PacketCodecs.INTEGER, UnitEntry::entityId,
+                PacketCodecs.STRING, UnitEntry::id,
                 PacketCodecs.STRING, UnitEntry::name,
                 PacketCodecs.VAR_INT, UnitEntry::priority,
                 UnitEntry::new
